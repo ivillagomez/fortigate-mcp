@@ -172,6 +172,103 @@ claude mcp add fortigate -- docker run --rm -i \
   fortigate-mcp
 ```
 
+## Usage Guide
+
+Once the Docker container is built and your Claude Desktop or Claude Code config is pointing at it, you're ready to go. There's nothing else to start — Claude will automatically launch the container when it needs to query the firewall.
+
+### How It Works
+
+1. You ask Claude a question about your firewall (in plain English)
+2. Claude picks the right MCP tool(s) and runs them against your FortiGate
+3. The FortiGate REST API responds with live data
+4. Claude interprets the results and answers your question
+
+The container starts, runs the query, and stops — it doesn't stay running in the background.
+
+### Verifying the Connection
+
+After setting up the config, restart Claude Desktop (or reload Claude Code), then ask:
+
+> "What's the system status of my firewall?"
+
+You should see Claude call the `get_system_status` tool and return your FortiGate's hostname, serial number, firmware version, and uptime. If this works, everything is connected.
+
+### Available Tools by Category
+
+#### System & Network
+| What you can ask | Tool used |
+|---|---|
+| "What's the CPU and memory usage?" | `get_system_performance` |
+| "Show me all interfaces and their IPs" | `get_interfaces` |
+| "What's the routing table look like?" | `get_routing_table` |
+| "Show me the ARP table" | `get_arp_table` |
+| "Which IPs have DHCP leases?" | `get_dhcp_leases` |
+
+#### Firewall Policies
+| What you can ask | Tool used |
+|---|---|
+| "List all firewall policies" | `get_policies` |
+| "Show me policy #5 in detail" | `get_policy` |
+| "Which policy matches traffic from 10.0.1.50 to 8.8.8.8 on port 443?" | `policy_lookup` |
+| "Which policies have zero hit counts?" | `get_policy_hit_count` |
+| "Show me all address objects" | `get_address_objects` |
+| "List address groups" | `get_address_groups` |
+| "What service objects are defined?" | `get_service_objects` |
+
+#### VPN
+| What you can ask | Tool used |
+|---|---|
+| "Are any IPsec tunnels down?" | `get_ipsec_tunnels` |
+| "Who's connected via SSL VPN right now?" | `get_ssl_vpn_sessions` |
+| "Show me the Phase 1 config for my VPN" | `get_vpn_phase1_config` |
+| "What's the Phase 2 config?" | `get_vpn_phase2_config` |
+
+#### Logs
+| What you can ask | Tool used |
+|---|---|
+| "Show me denied traffic from the last hour" | `get_traffic_logs` |
+| "Any failed login attempts today?" | `get_event_logs` |
+| "Show security events with high severity" | `get_security_logs` |
+| "Show VPN connection/disconnection events" | `get_vpn_event_logs` |
+
+#### Diagnostics
+| What you can ask | Tool used |
+|---|---|
+| "Show active sessions from 10.0.1.50" | `get_sessions` |
+| "Ping 8.8.8.8 from the firewall" | `ping` |
+| "Traceroute to google.com" | `traceroute` |
+| "Resolve dns.google" | `dns_lookup` |
+| "Run `get system status` on the CLI" | `execute_cli` (read-only commands only) |
+
+### Practical Workflows
+
+**Troubleshooting a user who can't reach a website:**
+> "Can you check if there's a firewall policy allowing traffic from 10.0.1.50 to 203.0.113.10 on port 443? Also show me any denied traffic logs from that source IP in the last 30 minutes."
+
+Claude will run `policy_lookup` and `get_traffic_logs` together and correlate the results.
+
+**VPN troubleshooting:**
+> "My IPsec VPN to the branch office seems down. Can you check the tunnel status, show the Phase 1 and Phase 2 config, and pull any VPN error logs from the last hour?"
+
+Claude will run multiple tools and cross-reference the config with the logs to pinpoint the issue.
+
+**Daily health check:**
+> "Give me a quick health check — system performance, any tunnels down, and any high-severity security events today."
+
+Claude will gather data from several tools and give you a summary.
+
+**Finding unused rules:**
+> "Which firewall policies have zero hits? I want to clean up unused rules."
+
+Claude will pull hit counts and flag policies with no traffic.
+
+### Tips
+
+- **Be specific with time ranges** — "last hour", "today", "last 24 hours" help filter logs effectively
+- **Combine questions** — Claude can run multiple tools in a single response, so ask everything at once
+- **Use IP addresses** — when troubleshooting, give Claude the specific source/destination IPs for precise results
+- **CLI tool is read-only** — you can ask Claude to run `get` and `show` commands, but any config changes will be blocked
+
 ## Example Queries
 
 Once connected, you can ask things like:
