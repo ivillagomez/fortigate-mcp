@@ -1,6 +1,8 @@
 /**
  * FortiGate REST API Client
- * Targets FortiOS 7.6.x — single firewall, no VDOM, read-only
+ * Targets FortiOS 7.6.x — single firewall, read-only
+ * Supports VDOM: pass ?vdom=name on all API calls.
+ * On non-VDOM firewalls, ?vdom=root is silently ignored by FortiOS.
  */
 
 export interface FortiGateConfig {
@@ -8,6 +10,7 @@ export interface FortiGateConfig {
   port?: number;      // default 443
   apiKey: string;     // API token generated in FortiGate GUI
   verifySsl?: boolean; // default false (self-signed certs are common)
+  vdom?: string;      // default "root" — safe on non-VDOM firewalls (FortiOS ignores it)
 }
 
 export interface ApiResponse<T = unknown> {
@@ -39,10 +42,12 @@ function sanitizeCliArg(input: string): string {
 export class FortiGateAPI {
   private baseUrl: string;
   private headers: Record<string, string>;
+  private defaultVdom: string;
 
   constructor(private config: FortiGateConfig) {
     const port = config.port ?? 443;
     this.baseUrl = `https://${config.host}:${port}`;
+    this.defaultVdom = config.vdom ?? "root";
     this.headers = {
       Authorization: `Bearer ${config.apiKey}`,
       "Content-Type": "application/json",
@@ -50,13 +55,27 @@ export class FortiGateAPI {
   }
 
   /**
-   * Generic GET request to the FortiGate API
+   * Get the effective VDOM name. Per-call override takes priority over config default.
+   * On non-VDOM firewalls, passing ?vdom=root is harmless — FortiOS ignores it.
+   */
+  getVdom(override?: string): string {
+    return override ?? this.defaultVdom;
+  }
+
+  /**
+   * Generic GET request to the FortiGate API.
+   * Automatically injects ?vdom= on every request.
    */
   async get<T = unknown>(
     path: string,
-    params?: Record<string, string | number | boolean>
+    params?: Record<string, string | number | boolean>,
+    vdom?: string,
   ): Promise<T> {
     const url = new URL(path, this.baseUrl);
+
+    // Always inject VDOM — safe on non-VDOM firewalls
+    url.searchParams.set("vdom", this.getVdom(vdom));
+
     if (params) {
       for (const [key, value] of Object.entries(params)) {
         url.searchParams.set(key, String(value));
@@ -81,7 +100,7 @@ export class FortiGateAPI {
   /**
    * Execute a read-only CLI command via the API
    */
-  async cli(commands: string[]): Promise<string> {
+  async cli(commands: string[], vdom?: string): Promise<string> {
     // Safety: block any write/config/destructive commands
     const blocked = [
       "config ", "set ", "delete ", "edit ", "append ", "end",
@@ -99,6 +118,7 @@ export class FortiGateAPI {
     }
 
     const url = new URL("/api/v2/monitor/system/cli", this.baseUrl);
+    url.searchParams.set("vdom", this.getVdom(vdom));
     const resp = await fetch(url.toString(), {
       method: "POST",
       headers: this.headers,
@@ -117,50 +137,50 @@ export class FortiGateAPI {
   }
 
   // --- System ---
-  async getSystemStatus() {
-    return this.get("/api/v2/monitor/system/status");
+  async getSystemStatus(vdom?: string) {
+    return this.get("/api/v2/monitor/system/status", undefined, vdom);
   }
 
-  async getSystemPerformance() {
-    return this.get("/api/v2/monitor/system/performance/status");
+  async getSystemPerformance(vdom?: string) {
+    return this.get("/api/v2/monitor/system/performance/status", undefined, vdom);
   }
 
-  async getInterfaces() {
-    return this.get("/api/v2/monitor/system/interface");
+  async getInterfaces(vdom?: string) {
+    return this.get("/api/v2/monitor/system/interface", undefined, vdom);
   }
 
-  async getInterfaceDetails(name: string) {
+  async getInterfaceDetails(name: string, vdom?: string) {
     return this.get(`/api/v2/monitor/system/interface`, {
       "interface": name,
       include_vlan: true,
-    });
+    }, vdom);
   }
 
-  async getRoutingTable() {
-    return this.get("/api/v2/monitor/router/ipv4");
+  async getRoutingTable(vdom?: string) {
+    return this.get("/api/v2/monitor/router/ipv4", undefined, vdom);
   }
 
-  async getArpTable() {
-    return this.get("/api/v2/monitor/system/arp");
+  async getArpTable(vdom?: string) {
+    return this.get("/api/v2/monitor/system/arp", undefined, vdom);
   }
 
-  async getDhcpLeases() {
-    return this.get("/api/v2/monitor/system/dhcp");
+  async getDhcpLeases(vdom?: string) {
+    return this.get("/api/v2/monitor/system/dhcp", undefined, vdom);
   }
 
   // --- Firewall Policies ---
-  async getPolicies(filter?: string) {
+  async getPolicies(filter?: string, vdom?: string) {
     const params: Record<string, string | number | boolean> = {};
     if (filter) params.filter = filter;
-    return this.get("/api/v2/cmdb/firewall/policy", params);
+    return this.get("/api/v2/cmdb/firewall/policy", params, vdom);
   }
 
-  async getPolicy(id: number) {
-    return this.get(`/api/v2/cmdb/firewall/policy/${id}`);
+  async getPolicy(id: number, vdom?: string) {
+    return this.get(`/api/v2/cmdb/firewall/policy/${id}`, undefined, vdom);
   }
 
-  async getPolicyHitCount() {
-    return this.get("/api/v2/monitor/firewall/policy");
+  async getPolicyHitCount(vdom?: string) {
+    return this.get("/api/v2/monitor/firewall/policy", undefined, vdom);
   }
 
   async policyLookup(params: {
@@ -170,37 +190,37 @@ export class FortiGateAPI {
     destip: string;
     protocol: number;
     destport?: number;
-  }) {
-    return this.get("/api/v2/monitor/firewall/policy-lookup", params as Record<string, string | number | boolean>);
+  }, vdom?: string) {
+    return this.get("/api/v2/monitor/firewall/policy-lookup", params as Record<string, string | number | boolean>, vdom);
   }
 
-  async getAddressObjects() {
-    return this.get("/api/v2/cmdb/firewall/address");
+  async getAddressObjects(vdom?: string) {
+    return this.get("/api/v2/cmdb/firewall/address", undefined, vdom);
   }
 
-  async getAddressGroups() {
-    return this.get("/api/v2/cmdb/firewall/addrgrp");
+  async getAddressGroups(vdom?: string) {
+    return this.get("/api/v2/cmdb/firewall/addrgrp", undefined, vdom);
   }
 
-  async getServiceObjects() {
-    return this.get("/api/v2/cmdb/firewall.service/custom");
+  async getServiceObjects(vdom?: string) {
+    return this.get("/api/v2/cmdb/firewall.service/custom", undefined, vdom);
   }
 
   // --- VPN ---
-  async getIpsecTunnels() {
-    return this.get("/api/v2/monitor/vpn/ipsec");
+  async getIpsecTunnels(vdom?: string) {
+    return this.get("/api/v2/monitor/vpn/ipsec", undefined, vdom);
   }
 
-  async getSslVpnSessions() {
-    return this.get("/api/v2/monitor/vpn/ssl");
+  async getSslVpnSessions(vdom?: string) {
+    return this.get("/api/v2/monitor/vpn/ssl", undefined, vdom);
   }
 
-  async getVpnPhase1Config() {
-    return this.get("/api/v2/cmdb/vpn.ipsec/phase1-interface");
+  async getVpnPhase1Config(vdom?: string) {
+    return this.get("/api/v2/cmdb/vpn.ipsec/phase1-interface", undefined, vdom);
   }
 
-  async getVpnPhase2Config() {
-    return this.get("/api/v2/cmdb/vpn.ipsec/phase2-interface");
+  async getVpnPhase2Config(vdom?: string) {
+    return this.get("/api/v2/cmdb/vpn.ipsec/phase2-interface", undefined, vdom);
   }
 
   // --- Logs ---
@@ -209,50 +229,51 @@ export class FortiGateAPI {
     subtype: string;
     rows?: number;
     filter?: string;
+    vdom?: string;
   }) {
-    const { type, subtype, rows, filter } = params;
+    const { type, subtype, rows, filter, vdom } = params;
     const queryParams: Record<string, string | number | boolean> = {};
     if (rows) queryParams.rows = rows;
     if (filter) queryParams.filter = filter;
-    return this.get(`/api/v2/log/memory/${type}/${subtype}`, queryParams);
+    return this.get(`/api/v2/log/memory/${type}/${subtype}`, queryParams, vdom);
   }
 
-  async getTrafficLogs(rows = 50, filter?: string) {
-    return this.getLogs({ type: "traffic", subtype: "forward", rows, filter });
+  async getTrafficLogs(rows = 50, filter?: string, vdom?: string) {
+    return this.getLogs({ type: "traffic", subtype: "forward", rows, filter, vdom });
   }
 
-  async getEventLogs(rows = 50, filter?: string) {
-    return this.getLogs({ type: "event", subtype: "system", rows, filter });
+  async getEventLogs(rows = 50, filter?: string, vdom?: string) {
+    return this.getLogs({ type: "event", subtype: "system", rows, filter, vdom });
   }
 
-  async getSecurityLogs(rows = 50, filter?: string) {
-    return this.getLogs({ type: "utm", subtype: "webfilter", rows, filter });
+  async getSecurityLogs(rows = 50, filter?: string, vdom?: string) {
+    return this.getLogs({ type: "utm", subtype: "webfilter", rows, filter, vdom });
   }
 
-  async getVpnEventLogs(rows = 50, filter?: string) {
-    return this.getLogs({ type: "event", subtype: "vpn", rows, filter });
+  async getVpnEventLogs(rows = 50, filter?: string, vdom?: string) {
+    return this.getLogs({ type: "event", subtype: "vpn", rows, filter, vdom });
   }
 
   // --- Diagnostics ---
-  async getSessions(filter?: string) {
+  async getSessions(filter?: string, vdom?: string) {
     const params: Record<string, string | number | boolean> = {};
     if (filter) params.filter = filter;
     params.count = 50;
-    return this.get("/api/v2/monitor/firewall/session", params);
+    return this.get("/api/v2/monitor/firewall/session", params, vdom);
   }
 
-  async ping(host: string, count = 4) {
+  async ping(host: string, count = 4, vdom?: string) {
     const safeHost = sanitizeCliArg(host);
     const safeCount = Math.max(1, Math.min(count, 20)); // clamp 1-20
-    return this.cli([`execute ping-options repeat-count ${safeCount}`, `execute ping ${safeHost}`]);
+    return this.cli([`execute ping-options repeat-count ${safeCount}`, `execute ping ${safeHost}`], vdom);
   }
 
-  async traceroute(host: string) {
-    return this.cli([`execute traceroute ${sanitizeCliArg(host)}`]);
+  async traceroute(host: string, vdom?: string) {
+    return this.cli([`execute traceroute ${sanitizeCliArg(host)}`], vdom);
   }
 
-  async getDnsResolve(hostname: string) {
-    return this.cli([`execute nslookup ${sanitizeCliArg(hostname)}`]);
+  async getDnsResolve(hostname: string, vdom?: string) {
+    return this.cli([`execute nslookup ${sanitizeCliArg(hostname)}`], vdom);
   }
 
   // --- TLS bypass for self-signed certs (per-client, not global) ---

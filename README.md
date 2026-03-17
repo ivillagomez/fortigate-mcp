@@ -121,6 +121,7 @@ FORTIGATE_HOST=192.168.1.1 FORTIGATE_API_KEY=your-api-token node build/index.js
 | `FORTIGATE_API_KEY` | * | — | REST API token |
 | `FORTIGATE_PORT` | No | `443` | HTTPS port |
 | `FORTIGATE_VERIFY_SSL` | No | `false` | Set to `true` if using a valid TLS certificate |
+| `FORTIGATE_VDOM` | No | `root` | VDOM name (safe on non-VDOM firewalls — FortiOS ignores it) |
 | `FORTIGATE_SSH_USER` | No | — | SSH username (enables SSH tools) |
 | `FORTIGATE_SSH_PASSWORD` | No | — | SSH password |
 | `FORTIGATE_SSH_KEY` | No | — | PEM private key (alternative to password) |
@@ -441,6 +442,44 @@ Once connected, you can ask things like:
 - "Search traffic logs across all firewalls for blocked traffic from 10.0.1.0/24"
 - "Show VPN failures from all sites in the last 7 days"
 - "What IPS attacks were detected this week?"
+
+## VDOM Support (Multi-VDOM Firewalls)
+
+The server supports FortiGate **Virtual Domains (VDOMs)** for multi-tenant environments. Every FortiGate API call includes `?vdom=` — this is safe on both VDOM and non-VDOM firewalls.
+
+### How it works
+
+| Scenario | Behavior |
+|---|---|
+| **Non-VDOM firewall** | `?vdom=root` is silently ignored by FortiOS — everything works normally |
+| **Multi-VDOM firewall** | Queries target the specified VDOM (default: `root`) |
+| **Per-tool override** | Every FortiGate tool accepts an optional `vdom` parameter to target a different VDOM on-the-fly |
+
+### Configuration
+
+Set the default VDOM via environment variable:
+
+```bash
+docker run --rm -i \
+  -e FORTIGATE_HOST=192.168.1.1 \
+  -e FORTIGATE_API_KEY=your-api-token \
+  -e FORTIGATE_VDOM=customer-a \
+  fortigate-mcp
+```
+
+Or override per-query in Claude:
+> "Show me the routing table for VDOM 'customer-b'"
+
+Claude will pass `vdom: "customer-b"` to the `get_routing_table` tool, overriding the default.
+
+### VDOM vs ADOM
+
+| Concept | Where | Purpose |
+|---|---|---|
+| **VDOM** (Virtual Domain) | FortiGate | Partitions one firewall into multiple virtual firewalls, each with its own policies, routing, and interfaces |
+| **ADOM** (Administrative Domain) | FortiAnalyzer | Groups managed FortiGates for delegation and log separation (e.g., per-customer) |
+
+In a typical MSP setup: each customer has their own **ADOM** on FortiAnalyzer containing one or more FortiGates, and each FortiGate may use **VDOMs** to further segment traffic.
 
 ## Security Notes
 

@@ -28,6 +28,7 @@ const FG_HOST = process.env.FORTIGATE_HOST;
 const FG_PORT = Number(process.env.FORTIGATE_PORT ?? "443");
 const FG_API_KEY = process.env.FORTIGATE_API_KEY;
 const FG_VERIFY_SSL = process.env.FORTIGATE_VERIFY_SSL === "true";
+const FG_VDOM = process.env.FORTIGATE_VDOM ?? "root"; // safe on non-VDOM firewalls
 
 // SSH config (optional)
 const FG_SSH_USER = process.env.FORTIGATE_SSH_USER;
@@ -64,8 +65,9 @@ if (hasFG) {
     port: FG_PORT,
     apiKey: FG_API_KEY!,
     verifySsl: FG_VERIFY_SSL,
+    vdom: FG_VDOM,
   });
-  console.error(`FortiGate REST API: ${FG_HOST}:${FG_PORT}`);
+  console.error(`FortiGate REST API: ${FG_HOST}:${FG_PORT} (VDOM: ${FG_VDOM})`);
 }
 
 let fgSsh: FortiGateSSH | null = null;
@@ -141,67 +143,85 @@ const server = new McpServer({
 // ========================== SYSTEM / NETWORK ===============================
 // (FortiGate REST API tools — registered only if FG is configured)
 
+// Helper: VDOM description for tool parameters
+const vdomDesc = `VDOM name to query (default: "${FG_VDOM}"). On non-VDOM firewalls, this is safely ignored.`;
+
 if (hasFG) {
   server.tool(
     "get_system_status",
     "Get FortiGate system status: hostname, firmware version, serial, uptime, and resource usage",
-    {},
-    async () => ({
-      content: [{ type: "text", text: await safeCall(() => requireFG("get_system_status").getSystemStatus()) }],
+    {
+      vdom: z.string().optional().describe(vdomDesc),
+    },
+    async ({ vdom }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_system_status").getSystemStatus(vdom)) }],
     })
   );
 
   server.tool(
     "get_system_performance",
     "Get real-time CPU, memory, and session counts",
-    {},
-    async () => ({
-      content: [{ type: "text", text: await safeCall(() => requireFG("get_system_performance").getSystemPerformance()) }],
+    {
+      vdom: z.string().optional().describe(vdomDesc),
+    },
+    async ({ vdom }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_system_performance").getSystemPerformance(vdom)) }],
     })
   );
 
   server.tool(
     "get_interfaces",
     "List all network interfaces with status, IP, speed, and traffic counters",
-    {},
-    async () => ({
-      content: [{ type: "text", text: await safeCall(() => requireFG("get_interfaces").getInterfaces()) }],
+    {
+      vdom: z.string().optional().describe(vdomDesc),
+    },
+    async ({ vdom }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_interfaces").getInterfaces(vdom)) }],
     })
   );
 
   server.tool(
     "get_interface_details",
     "Get detailed info for a specific interface (status, IP, speed, counters, VLAN)",
-    { name: z.string().describe("Interface name, e.g. 'port1', 'wan1', 'internal'") },
-    async ({ name }) => ({
-      content: [{ type: "text", text: await safeCall(() => requireFG("get_interface_details").getInterfaceDetails(name)) }],
+    {
+      name: z.string().describe("Interface name, e.g. 'port1', 'wan1', 'internal'"),
+      vdom: z.string().optional().describe(vdomDesc),
+    },
+    async ({ name, vdom }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_interface_details").getInterfaceDetails(name, vdom)) }],
     })
   );
 
   server.tool(
     "get_routing_table",
     "Show the IPv4 routing table (connected, static, dynamic routes)",
-    {},
-    async () => ({
-      content: [{ type: "text", text: await safeCall(() => requireFG("get_routing_table").getRoutingTable()) }],
+    {
+      vdom: z.string().optional().describe(vdomDesc),
+    },
+    async ({ vdom }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_routing_table").getRoutingTable(vdom)) }],
     })
   );
 
   server.tool(
     "get_arp_table",
     "Show the ARP table (IP-to-MAC mappings)",
-    {},
-    async () => ({
-      content: [{ type: "text", text: await safeCall(() => requireFG("get_arp_table").getArpTable()) }],
+    {
+      vdom: z.string().optional().describe(vdomDesc),
+    },
+    async ({ vdom }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_arp_table").getArpTable(vdom)) }],
     })
   );
 
   server.tool(
     "get_dhcp_leases",
     "List active DHCP leases issued by the firewall",
-    {},
-    async () => ({
-      content: [{ type: "text", text: await safeCall(() => requireFG("get_dhcp_leases").getDhcpLeases()) }],
+    {
+      vdom: z.string().optional().describe(vdomDesc),
+    },
+    async ({ vdom }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_dhcp_leases").getDhcpLeases(vdom)) }],
     })
   );
 
@@ -214,27 +234,33 @@ if (hasFG) {
       filter: z.string().optional().describe(
         "API filter string, e.g. 'name==@VPN' or 'srcintf==port1'. Use @ for contains match."
       ),
+      vdom: z.string().optional().describe(vdomDesc),
     },
-    async ({ filter }) => ({
-      content: [{ type: "text", text: await safeCall(() => requireFG("get_policies").getPolicies(filter)) }],
+    async ({ filter, vdom }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_policies").getPolicies(filter, vdom)) }],
     })
   );
 
   server.tool(
     "get_policy",
     "Get a specific firewall policy by its ID",
-    { id: z.number().describe("Policy ID number") },
-    async ({ id }) => ({
-      content: [{ type: "text", text: await safeCall(() => requireFG("get_policy").getPolicy(id)) }],
+    {
+      id: z.number().describe("Policy ID number"),
+      vdom: z.string().optional().describe(vdomDesc),
+    },
+    async ({ id, vdom }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_policy").getPolicy(id, vdom)) }],
     })
   );
 
   server.tool(
     "get_policy_hit_count",
     "Get hit counts and byte/packet counters for all policies (useful for finding unused rules)",
-    {},
-    async () => ({
-      content: [{ type: "text", text: await safeCall(() => requireFG("get_policy_hit_count").getPolicyHitCount()) }],
+    {
+      vdom: z.string().optional().describe(vdomDesc),
+    },
+    async ({ vdom }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_policy_hit_count").getPolicyHitCount(vdom)) }],
     })
   );
 
@@ -248,36 +274,43 @@ if (hasFG) {
       destip: z.string().describe("Destination IP address, e.g. '8.8.8.8'"),
       protocol: z.number().describe("IP protocol number: 6=TCP, 17=UDP, 1=ICMP"),
       destport: z.number().optional().describe("Destination port (for TCP/UDP), e.g. 443"),
+      vdom: z.string().optional().describe(vdomDesc),
     },
-    async (params) => ({
-      content: [{ type: "text", text: await safeCall(() => requireFG("policy_lookup").policyLookup(params)) }],
+    async ({ vdom, ...params }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("policy_lookup").policyLookup(params, vdom)) }],
     })
   );
 
   server.tool(
     "get_address_objects",
     "List firewall address objects (subnets, FQDNs, IP ranges used in policies)",
-    {},
-    async () => ({
-      content: [{ type: "text", text: await safeCall(() => requireFG("get_address_objects").getAddressObjects()) }],
+    {
+      vdom: z.string().optional().describe(vdomDesc),
+    },
+    async ({ vdom }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_address_objects").getAddressObjects(vdom)) }],
     })
   );
 
   server.tool(
     "get_address_groups",
     "List firewall address groups",
-    {},
-    async () => ({
-      content: [{ type: "text", text: await safeCall(() => requireFG("get_address_groups").getAddressGroups()) }],
+    {
+      vdom: z.string().optional().describe(vdomDesc),
+    },
+    async ({ vdom }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_address_groups").getAddressGroups(vdom)) }],
     })
   );
 
   server.tool(
     "get_service_objects",
     "List custom firewall service objects (ports/protocols used in policies)",
-    {},
-    async () => ({
-      content: [{ type: "text", text: await safeCall(() => requireFG("get_service_objects").getServiceObjects()) }],
+    {
+      vdom: z.string().optional().describe(vdomDesc),
+    },
+    async ({ vdom }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_service_objects").getServiceObjects(vdom)) }],
     })
   );
 
@@ -286,36 +319,44 @@ if (hasFG) {
   server.tool(
     "get_ipsec_tunnels",
     "Show IPsec VPN tunnel status: phase1/phase2 state, uptime, bytes transferred, remote gateway",
-    {},
-    async () => ({
-      content: [{ type: "text", text: await safeCall(() => requireFG("get_ipsec_tunnels").getIpsecTunnels()) }],
+    {
+      vdom: z.string().optional().describe(vdomDesc),
+    },
+    async ({ vdom }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_ipsec_tunnels").getIpsecTunnels(vdom)) }],
     })
   );
 
   server.tool(
     "get_ssl_vpn_sessions",
     "List active SSL VPN sessions: connected users, IPs, duration, bandwidth",
-    {},
-    async () => ({
-      content: [{ type: "text", text: await safeCall(() => requireFG("get_ssl_vpn_sessions").getSslVpnSessions()) }],
+    {
+      vdom: z.string().optional().describe(vdomDesc),
+    },
+    async ({ vdom }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_ssl_vpn_sessions").getSslVpnSessions(vdom)) }],
     })
   );
 
   server.tool(
     "get_vpn_phase1_config",
     "Show IPsec Phase 1 configuration (IKE settings, authentication, peer addresses)",
-    {},
-    async () => ({
-      content: [{ type: "text", text: await safeCall(() => requireFG("get_vpn_phase1_config").getVpnPhase1Config()) }],
+    {
+      vdom: z.string().optional().describe(vdomDesc),
+    },
+    async ({ vdom }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_vpn_phase1_config").getVpnPhase1Config(vdom)) }],
     })
   );
 
   server.tool(
     "get_vpn_phase2_config",
     "Show IPsec Phase 2 configuration (SA proposals, selectors, PFS settings)",
-    {},
-    async () => ({
-      content: [{ type: "text", text: await safeCall(() => requireFG("get_vpn_phase2_config").getVpnPhase2Config()) }],
+    {
+      vdom: z.string().optional().describe(vdomDesc),
+    },
+    async ({ vdom }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_vpn_phase2_config").getVpnPhase2Config(vdom)) }],
     })
   );
 
@@ -329,9 +370,10 @@ if (hasFG) {
       filter: z.string().optional().describe(
         "Log filter, e.g. 'srcip==10.0.1.50', 'dstport==443', 'action==deny', 'policyid==5'. Combine with '&&'."
       ),
+      vdom: z.string().optional().describe(vdomDesc),
     },
-    async ({ rows, filter }) => ({
-      content: [{ type: "text", text: await safeCall(() => requireFG("get_traffic_logs").getTrafficLogs(rows, filter)) }],
+    async ({ rows, filter, vdom }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_traffic_logs").getTrafficLogs(rows, filter, vdom)) }],
     })
   );
 
@@ -341,9 +383,10 @@ if (hasFG) {
     {
       rows: z.number().optional().default(50).describe("Number of log rows (default 50)"),
       filter: z.string().optional().describe("Log filter string"),
+      vdom: z.string().optional().describe(vdomDesc),
     },
-    async ({ rows, filter }) => ({
-      content: [{ type: "text", text: await safeCall(() => requireFG("get_event_logs").getEventLogs(rows, filter)) }],
+    async ({ rows, filter, vdom }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_event_logs").getEventLogs(rows, filter, vdom)) }],
     })
   );
 
@@ -353,9 +396,10 @@ if (hasFG) {
     {
       rows: z.number().optional().default(50).describe("Number of log rows (default 50)"),
       filter: z.string().optional().describe("Log filter string"),
+      vdom: z.string().optional().describe(vdomDesc),
     },
-    async ({ rows, filter }) => ({
-      content: [{ type: "text", text: await safeCall(() => requireFG("get_security_logs").getSecurityLogs(rows, filter)) }],
+    async ({ rows, filter, vdom }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_security_logs").getSecurityLogs(rows, filter, vdom)) }],
     })
   );
 
@@ -365,9 +409,10 @@ if (hasFG) {
     {
       rows: z.number().optional().default(50).describe("Number of log rows (default 50)"),
       filter: z.string().optional().describe("Log filter string"),
+      vdom: z.string().optional().describe(vdomDesc),
     },
-    async ({ rows, filter }) => ({
-      content: [{ type: "text", text: await safeCall(() => requireFG("get_vpn_event_logs").getVpnEventLogs(rows, filter)) }],
+    async ({ rows, filter, vdom }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_vpn_event_logs").getVpnEventLogs(rows, filter, vdom)) }],
     })
   );
 
@@ -380,9 +425,10 @@ if (hasFG) {
       filter: z.string().optional().describe(
         "Session filter, e.g. 'src==10.0.1.50', 'dst==8.8.8.8', 'dport==443', 'proto==6'"
       ),
+      vdom: z.string().optional().describe(vdomDesc),
     },
-    async ({ filter }) => ({
-      content: [{ type: "text", text: await safeCall(() => requireFG("get_sessions").getSessions(filter)) }],
+    async ({ filter, vdom }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_sessions").getSessions(filter, vdom)) }],
     })
   );
 
@@ -392,9 +438,10 @@ if (hasFG) {
     {
       host: z.string().describe("IP address or hostname to ping"),
       count: z.number().optional().default(4).describe("Number of ping packets (default 4)"),
+      vdom: z.string().optional().describe(vdomDesc),
     },
-    async ({ host, count }) => ({
-      content: [{ type: "text", text: await safeCall(() => requireFG("ping").ping(host, count)) }],
+    async ({ host, count, vdom }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("ping").ping(host, count, vdom)) }],
     })
   );
 
@@ -403,9 +450,10 @@ if (hasFG) {
     "Run a traceroute from the firewall to a destination",
     {
       host: z.string().describe("IP address or hostname to trace"),
+      vdom: z.string().optional().describe(vdomDesc),
     },
-    async ({ host }) => ({
-      content: [{ type: "text", text: await safeCall(() => requireFG("traceroute").traceroute(host)) }],
+    async ({ host, vdom }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("traceroute").traceroute(host, vdom)) }],
     })
   );
 
@@ -414,9 +462,10 @@ if (hasFG) {
     "Resolve a hostname using the firewall's configured DNS servers",
     {
       hostname: z.string().describe("Hostname to resolve, e.g. 'google.com'"),
+      vdom: z.string().optional().describe(vdomDesc),
     },
-    async ({ hostname }) => ({
-      content: [{ type: "text", text: await safeCall(() => requireFG("dns_lookup").getDnsResolve(hostname)) }],
+    async ({ hostname, vdom }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("dns_lookup").getDnsResolve(hostname, vdom)) }],
     })
   );
 
@@ -427,9 +476,10 @@ if (hasFG) {
       commands: z.array(z.string()).describe(
         "Array of CLI commands to execute sequentially, e.g. ['get system interface physical', 'get router info routing-table all']"
       ),
+      vdom: z.string().optional().describe(vdomDesc),
     },
-    async ({ commands }) => ({
-      content: [{ type: "text", text: await safeCall(() => requireFG("execute_cli").cli(commands)) }],
+    async ({ commands, vdom }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("execute_cli").cli(commands, vdom)) }],
     })
   );
 }
