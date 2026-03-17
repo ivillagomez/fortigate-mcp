@@ -294,7 +294,9 @@ export class FortiAnalyzerAPI {
             url: `/logview/adom/${targetAdom}/logsearch/count/${tid}`,
           }]);
 
-          const countData = (resultArray(countResp)[0]?.data ?? countResp.result) as {
+          // Poll response: { result: { progress-percent, matched-logs, ... } }
+          const countResult = resultArray(countResp)[0]?.data ?? countResp.result;
+          const countData = countResult as {
             "progress-percent"?: number;
             "matched-logs"?: number;
           };
@@ -302,6 +304,7 @@ export class FortiAnalyzerAPI {
         }
 
         // Step 3: Fetch results
+        // Fetch response: { result: { data: [...logs], total-count, percentage, ... } }
         const fetchResp = await this.rpc("get", [{
           apiver: 3,
           url: `/logview/adom/${targetAdom}/logsearch/${tid}`,
@@ -309,7 +312,14 @@ export class FortiAnalyzerAPI {
           offset: 0,
         }]);
 
-        return resultArray(fetchResp)[0]?.data ?? fetchResp.result;
+        // Extract log entries — FAZ wraps them in result.data (object shape)
+        // or result[0].data (array shape, less common)
+        const fetchResult = resultArray(fetchResp)[0]?.data ?? fetchResp.result;
+        const wrapper = fetchResult as { data?: unknown[]; "total-count"?: number };
+        if (wrapper && Array.isArray(wrapper.data)) {
+          return wrapper.data;
+        }
+        return fetchResult;
       } finally {
         // Step 4: Cleanup — always delete the search task
         try {
