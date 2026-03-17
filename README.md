@@ -190,13 +190,42 @@ If you prefer using the Unraid GUI:
 
 1. Go to **Docker > Add Container**
 2. Set **Repository** to the path of your built image (`fortigate-mcp`) or build it first via terminal (see above)
-3. Add the following environment variables:
-   - `FORTIGATE_HOST` = your FortiGate IP (e.g. `192.168.1.1`)
-   - `FORTIGATE_API_KEY` = your API token
-   - `FAZ_HOST` = your FortiAnalyzer IP *(optional)*
-   - `FAZ_API_TOKEN` = your FAZ API token *(optional)*
-   - `FAZ_ADOM` = ADOM name *(optional, default: root)*
-4. Set **Network Type** to `Host` so the container can reach your FortiGate/FAZ on the local network
+3. Set **Network Type** to `Host` so the container can reach your FortiGate/FAZ on the local network
+4. Click **Add another Path, Port, Variable, Label or Device** for each variable below and configure as follows:
+
+#### FortiGate Variables
+
+| Config Type | Name | Key | Value | Required |
+|---|---|---|---|---|
+| Variable | FortiGate Host | `FORTIGATE_HOST` | Your FortiGate IP (e.g. `192.168.1.1`) | Yes |
+| Variable | FortiGate API Key | `FORTIGATE_API_KEY` | Your REST API token | Yes |
+| Variable | FortiGate Port | `FORTIGATE_PORT` | `443` | No (default: 443) |
+| Variable | Verify SSL | `FORTIGATE_VERIFY_SSL` | `false` | No (default: false) |
+| Variable | VDOM | `FORTIGATE_VDOM` | `root` | No (default: root) |
+
+#### FortiGate SSH Variables (optional — for `diagnose` commands)
+
+| Config Type | Name | Key | Value | Required |
+|---|---|---|---|---|
+| Variable | SSH User | `FORTIGATE_SSH_USER` | SSH admin username | No |
+| Variable | SSH Password | `FORTIGATE_SSH_PASSWORD` | SSH password | No |
+| Variable | SSH Port | `FORTIGATE_SSH_PORT` | `22` | No (default: 22) |
+
+#### FortiAnalyzer Variables (optional)
+
+| Config Type | Name | Key | Value | Required |
+|---|---|---|---|---|
+| Variable | FAZ Host | `FAZ_HOST` | Your FortiAnalyzer IP (e.g. `10.0.0.50`) | Yes (if using FAZ) |
+| Variable | FAZ API Token | `FAZ_API_TOKEN` | Your FAZ API token | Yes* |
+| Variable | FAZ User | `FAZ_USER` | Admin username (alternative to token) | Yes* |
+| Variable | FAZ Password | `FAZ_PASSWORD` | Admin password (alternative to token) | Yes* |
+| Variable | FAZ Port | `FAZ_PORT` | `443` | No (default: 443) |
+| Variable | FAZ ADOM | `FAZ_ADOM` | `root` | No (default: root) |
+| Variable | FAZ Verify SSL | `FAZ_VERIFY_SSL` | `false` | No (default: false) |
+
+*\* Provide either `FAZ_API_TOKEN` or both `FAZ_USER` + `FAZ_PASSWORD`*
+
+> **Note:** No container path or host path is needed for these — they are all **Variable** type configs with just a Key and Value. No ports or volume mappings are required since this is a stdio-based server.
 
 > **Note:** Since this is a stdio MCP server (not a web service), the Unraid Docker UI is mainly useful for pre-building the image. The actual container is launched by Claude Desktop/Code as needed — see the config examples below.
 
