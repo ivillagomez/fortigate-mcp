@@ -6,7 +6,7 @@ Built for **FortiOS 7.x** (single firewall, no VDOM).
 
 ## Features
 
-**22 read-only tools** across 5 categories:
+**23 read-only tools** across 5 categories:
 
 | Category | Tools |
 |---|---|
@@ -14,7 +14,7 @@ Built for **FortiOS 7.x** (single firewall, no VDOM).
 | **Firewall Policies** | List/filter policies, policy lookup, hit counts, address objects/groups, service objects |
 | **VPN** | IPsec tunnel status, SSL VPN sessions, Phase 1/2 config |
 | **Logs** | Traffic, event, security, and VPN logs with filters |
-| **Diagnostics** | Session table, ping, traceroute, DNS lookup, read-only CLI |
+| **Diagnostics** | Session table, ping, traceroute, DNS lookup, read-only CLI (REST + SSH) |
 
 All write operations are blocked — the server will refuse any config/set/delete/reboot commands.
 
@@ -67,6 +67,10 @@ FORTIGATE_HOST=192.168.1.1 FORTIGATE_API_KEY=your-api-token node build/index.js
 | `FORTIGATE_API_KEY` | Yes | — | REST API token |
 | `FORTIGATE_PORT` | No | `443` | HTTPS port |
 | `FORTIGATE_VERIFY_SSL` | No | `false` | Set to `true` if using a valid TLS certificate |
+| `FORTIGATE_SSH_USER` | No | — | SSH username (enables SSH tools) |
+| `FORTIGATE_SSH_PASSWORD` | No | — | SSH password |
+| `FORTIGATE_SSH_KEY` | No | — | PEM private key (alternative to password) |
+| `FORTIGATE_SSH_PORT` | No | `22` | SSH port |
 
 ## Installing on Unraid
 
@@ -238,7 +242,8 @@ You should see Claude call the `get_system_status` tool and return your FortiGat
 | "Ping 8.8.8.8 from the firewall" | `ping` |
 | "Traceroute to google.com" | `traceroute` |
 | "Resolve dns.google" | `dns_lookup` |
-| "Run `get system status` on the CLI" | `execute_cli` (read-only commands only) |
+| "Run `get system status` on the CLI" | `execute_cli` (REST API, read-only) |
+| "Run `diagnose sys session list`" | `execute_cli_ssh` (SSH, read-only) |
 
 ### Practical Workflows
 
@@ -262,12 +267,38 @@ Claude will gather data from several tools and give you a summary.
 
 Claude will pull hit counts and flag policies with no traffic.
 
+### SSH vs REST API CLI
+
+The server has two CLI tools:
+
+| Tool | Transport | Best for |
+|---|---|---|
+| `execute_cli` | REST API | Simple `get`, `show` commands. No SSH needed. |
+| `execute_cli_ssh` | SSH | `diagnose` commands, debug output, session filters, and anything that returns richer output over SSH. |
+
+SSH is **optional** — the server works fine with just the REST API. Add SSH credentials when you need deeper diagnostics:
+
+```bash
+docker run --rm -i \
+  -e FORTIGATE_HOST=192.168.1.1 \
+  -e FORTIGATE_API_KEY=your-api-token \
+  -e FORTIGATE_SSH_USER=admin \
+  -e FORTIGATE_SSH_PASSWORD=your-password \
+  fortigate-mcp
+```
+
+**SSH example queries:**
+- "Run `diagnose vpn ike log filter name my-vpn` and `diagnose debug application ike -1` over SSH"
+- "Use SSH to run `diagnose sys session filter dport 443` then `diagnose sys session list`"
+- "Check the IKE real-time log for my VPN tunnel via SSH"
+
 ### Tips
 
 - **Be specific with time ranges** — "last hour", "today", "last 24 hours" help filter logs effectively
 - **Combine questions** — Claude can run multiple tools in a single response, so ask everything at once
 - **Use IP addresses** — when troubleshooting, give Claude the specific source/destination IPs for precise results
-- **CLI tool is read-only** — you can ask Claude to run `get` and `show` commands, but any config changes will be blocked
+- **CLI tools are read-only** — you can run `get`, `show`, and `diagnose` commands, but config changes are blocked
+- **SSH is optional** — only needed for `diagnose` commands that work better over SSH
 
 ## Example Queries
 

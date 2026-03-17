@@ -11,6 +11,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { FortiGateAPI } from "./fortigate-api.js";
+import { FortiGateSSH } from "./fortigate-ssh.js";
 
 // ---------------------------------------------------------------------------
 // Config from environment
@@ -19,6 +20,12 @@ const FG_HOST = process.env.FORTIGATE_HOST;
 const FG_PORT = Number(process.env.FORTIGATE_PORT ?? "443");
 const FG_API_KEY = process.env.FORTIGATE_API_KEY;
 const FG_VERIFY_SSL = process.env.FORTIGATE_VERIFY_SSL === "true";
+
+// SSH config (optional)
+const FG_SSH_USER = process.env.FORTIGATE_SSH_USER;
+const FG_SSH_PASSWORD = process.env.FORTIGATE_SSH_PASSWORD;
+const FG_SSH_KEY = process.env.FORTIGATE_SSH_KEY;  // PEM private key string or file path
+const FG_SSH_PORT = Number(process.env.FORTIGATE_SSH_PORT ?? "22");
 
 if (!FG_HOST || !FG_API_KEY) {
   console.error("Missing required env vars: FORTIGATE_HOST and FORTIGATE_API_KEY");
@@ -31,6 +38,21 @@ const fg = new FortiGateAPI({
   apiKey: FG_API_KEY,
   verifySsl: FG_VERIFY_SSL,
 });
+
+// SSH client — only created if credentials are provided
+let fgSsh: FortiGateSSH | null = null;
+if (FG_SSH_USER && (FG_SSH_PASSWORD || FG_SSH_KEY)) {
+  fgSsh = new FortiGateSSH({
+    host: FG_HOST,
+    port: FG_SSH_PORT,
+    username: FG_SSH_USER,
+    password: FG_SSH_PASSWORD,
+    privateKey: FG_SSH_KEY,
+  });
+  console.error(`SSH enabled for ${FG_SSH_USER}@${FG_HOST}:${FG_SSH_PORT}`);
+} else {
+  console.error("SSH not configured (set FORTIGATE_SSH_USER + FORTIGATE_SSH_PASSWORD or FORTIGATE_SSH_KEY to enable)");
+}
 
 // ---------------------------------------------------------------------------
 // Helper: format API results as readable text
@@ -339,7 +361,7 @@ server.tool(
 
 server.tool(
   "execute_cli",
-  "Execute a read-only CLI command on the FortiGate. Blocked: config/set/delete/edit/reboot. Use for 'get', 'show', 'diagnose', 'execute' (read-only) commands.",
+  "Execute a read-only CLI command on the FortiGate via REST API. Blocked: config/set/delete/edit/reboot. Use for 'get', 'show', 'diagnose', 'execute' (read-only) commands.",
   {
     commands: z.array(z.string()).describe(
       "Array of CLI commands to execute sequentially, e.g. ['get system interface physical', 'get router info routing-table all']"
@@ -348,6 +370,29 @@ server.tool(
   async ({ commands }) => ({
     content: [{ type: "text", text: await safeCall(() => fg.cli(commands)) }],
   })
+);
+
+server.tool(
+  "execute_cli_ssh",
+  "Execute read-only CLI commands over SSH. Better for 'diagnose' commands, debug output, and commands that return richer output than the REST API. Requires SSH to be configured. Blocked: config/set/delete/edit/reboot.",
+  {
+    commands: z.array(z.string()).describe(
+      "Array of CLI commands to execute, e.g. ['diagnose sys session filter clear', 'diagnose sys session filter dport 443', 'diagnose sys session list']"
+    ),
+  },
+  async ({ commands }) => {
+    if (!fgSsh) {
+      return {
+        content: [{
+          type: "text",
+          text: "Error: SSH is not configured. Set FORTIGATE_SSH_USER and FORTIGATE_SSH_PASSWORD (or FORTIGATE_SSH_KEY) environment variables to enable SSH.",
+        }],
+      };
+    }
+    return {
+      content: [{ type: "text", text: await safeCall(() => fgSsh!.execute(commands)) }],
+    };
+  }
 );
 
 // ---------------------------------------------------------------------------
