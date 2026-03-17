@@ -23,14 +23,23 @@ interface JsonRpcRequest {
   id: number;
 }
 
+/**
+ * FAZ JSON-RPC responses have two shapes:
+ *   - Standard:    { result: [{ data, status, url }] }
+ *   - Log search:  { result: { tid: number } }       (create task)
+ * We model `result` as `unknown` and extract safely in each call site.
+ */
 interface JsonRpcResponse {
-  result: Array<{
-    data?: unknown;
-    status: { code: number; message: string };
-    url?: string;
-  }>;
+  result: unknown;
   session?: string;
   id: number;
+  error?: { code: number; message: string };
+}
+
+/** Helper: normalise result into the standard array-of-objects shape when possible */
+function resultArray(resp: JsonRpcResponse): Array<{ data?: unknown; status?: { code: number; message: string }; url?: string }> {
+  if (Array.isArray(resp.result)) return resp.result as Array<{ data?: unknown; status?: { code: number; message: string }; url?: string }>;
+  return [];
 }
 
 /**
@@ -93,10 +102,16 @@ export class FortiAnalyzerAPI {
 
     const data = await resp.json() as JsonRpcResponse;
 
-    // Check for API-level errors
-    if (data.result?.[0]?.status?.code !== 0) {
-      const status = data.result?.[0]?.status;
-      throw new Error(`FortiAnalyzer API error ${status?.code}: ${status?.message}`);
+    // Check for JSON-RPC-level errors (e.g. invalid params)
+    if (data.error) {
+      throw new Error(`FortiAnalyzer RPC error ${data.error.code}: ${data.error.message}`);
+    }
+
+    // Check for API-level errors (standard array response shape)
+    const arr = resultArray(data);
+    if (arr.length > 0 && arr[0].status && arr[0].status.code !== 0) {
+      const status = arr[0].status;
+      throw new Error(`FortiAnalyzer API error ${status.code}: ${status.message}`);
     }
 
     return data;
@@ -177,7 +192,7 @@ export class FortiAnalyzerAPI {
       const resp = await this.rpc("get", [{
         url: "/dvmdb/adom",
       }]);
-      return resp.result[0].data;
+      return resultArray(resp)[0]?.data;
     });
   }
 
@@ -188,7 +203,7 @@ export class FortiAnalyzerAPI {
         url: `/dvmdb/adom/${targetAdom}/device`,
         option: ["no loadsub"],
       }]);
-      return resp.result[0].data;
+      return resultArray(resp)[0]?.data;
     });
   }
 
@@ -199,7 +214,7 @@ export class FortiAnalyzerAPI {
       const resp = await this.rpc("get", [{
         url: `/dvmdb/adom/${targetAdom}/device/${safeDevice}`,
       }]);
-      return resp.result[0].data;
+      return resultArray(resp)[0]?.data;
     });
   }
 
@@ -232,42 +247,54 @@ export class FortiAnalyzerAPI {
       if (params.device) {
         searchParams.device = [{ devid: params.device }];
       } else {
-        searchParams.device = [{ devid: "All_Devices" }];
+        searchParams.device = [{ devid: "All_FortiGate" }];
       }
 
       if (params.filter) {
         searchParams.filter = params.filter;
       }
 
+      // time-range is REQUIRED by FAZ — default to last 24 hours if not specified
       if (params.timeStart && params.timeEnd) {
         searchParams["time-range"] = {
           start: params.timeStart,
           end: params.timeEnd,
         };
+      } else {
+        const now = new Date();
+        const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+        const fmt = (d: Date) => d.toISOString().replace("T", " ").substring(0, 19);
+        searchParams["time-range"] = {
+          start: fmt(dayAgo),
+          end: fmt(now),
+        };
       }
 
       const createResp = await this.rpc("add", [searchParams]);
-      const tid = (createResp.result[0].data as { tid: number })?.tid;
+
+      // FAZ returns { result: { tid: number } } for search creation (not the standard array shape)
+      const tid = (createResp.result as { tid?: number })?.tid
+        ?? (resultArray(createResp)[0]?.data as { tid?: number })?.tid;
 
       if (!tid) {
         throw new Error("FortiAnalyzer log search failed: no task ID returned");
       }
 
       try {
-        // Step 2: Poll until complete (max 30 seconds)
+        // Step 2: Poll until complete (max 90 seconds — large searches can take over 60s)
         let progress = 0;
-        const maxWait = 30000;
+        const maxWait = 90000;
         const startTime = Date.now();
 
         while (progress < 100 && (Date.now() - startTime) < maxWait) {
-          await new Promise((resolve) => setTimeout(resolve, 1000));
+          await new Promise((resolve) => setTimeout(resolve, 2000));
 
           const countResp = await this.rpc("get", [{
             apiver: 3,
             url: `/logview/adom/${targetAdom}/logsearch/count/${tid}`,
           }]);
 
-          const countData = countResp.result[0].data as {
+          const countData = (resultArray(countResp)[0]?.data ?? countResp.result) as {
             "progress-percent"?: number;
             "matched-logs"?: number;
           };
@@ -282,7 +309,7 @@ export class FortiAnalyzerAPI {
           offset: 0,
         }]);
 
-        return fetchResp.result[0].data;
+        return resultArray(fetchResp)[0]?.data ?? fetchResp.result;
       } finally {
         // Step 4: Cleanup — always delete the search task
         try {
@@ -397,7 +424,7 @@ export class FortiAnalyzerAPI {
       const resp = await this.rpc("get", [{
         url: `/report/adom/${targetAdom}/template/list`,
       }]);
-      return resp.result[0].data;
+      return resultArray(resp)[0]?.data;
     });
   }
 
@@ -407,7 +434,7 @@ export class FortiAnalyzerAPI {
       const resp = await this.rpc("get", [{
         url: `/report/adom/${targetAdom}/layout/list`,
       }]);
-      return resp.result[0].data;
+      return resultArray(resp)[0]?.data;
     });
   }
 
@@ -420,7 +447,7 @@ export class FortiAnalyzerAPI {
       const resp = await this.rpc("get", [{
         url: "/sys/status",
       }]);
-      return resp.result[0].data;
+      return resultArray(resp)[0]?.data;
     });
   }
 
