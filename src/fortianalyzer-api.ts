@@ -59,11 +59,6 @@ export class FortiAnalyzerAPI {
     const port = config.port ?? 443;
     this.baseUrl = `https://${config.host}:${port}/jsonrpc`;
     this.adom = config.adom ?? "root";
-
-    // If API token is provided, use it directly as the session
-    if (config.apiToken) {
-      this.session = config.apiToken;
-    }
   }
 
   // -------------------------------------------------------------------------
@@ -74,13 +69,18 @@ export class FortiAnalyzerAPI {
     const request: JsonRpcRequest = {
       method,
       params,
-      session: this.session,
+      session: this.config.apiToken ? null : this.session,
       id: ++this.requestId,
     };
 
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (this.config.apiToken) {
+      headers["Authorization"] = `Bearer ${this.config.apiToken}`;
+    }
+
     const resp = await fetch(this.baseUrl, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(request),
       // @ts-expect-error — Node 22 fetch supports dispatcher for self-signed certs
       dispatcher: this.config.verifySsl === true ? undefined : await this.getUnsafeAgent(),
