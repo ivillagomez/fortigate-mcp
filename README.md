@@ -63,48 +63,89 @@ All write operations are blocked — the server will refuse any config/set/delet
 
 ## Prerequisites
 
-- **FortiGate**: FortiOS 7.x with a read-only API token
-- **FortiAnalyzer** *(optional)*: FortiAnalyzer 7.x with API token or admin credentials
-- **Runtime**: Docker **or** Node.js 22+
+- **FortiGate**: FortiOS 7.x with a read-only API token ([how to create one](#fortigate-api-token))
+- **FortiAnalyzer** *(optional)*: FortiAnalyzer 7.x with API token or admin credentials ([how to create one](#fortianalyzer-api-token))
+- **Runtime** — pick one:
+  - **Docker** (recommended) — [Install Docker Desktop](https://docs.docker.com/get-docker/) for Windows/macOS, or `apt install docker.io` on Linux
+  - **Node.js 22+** — [Download from nodejs.org](https://nodejs.org/) (use the LTS version)
 
 ## Creating API Tokens
 
 ### FortiGate API Token
 
-1. Log into the FortiGate GUI
-2. Go to **System > Admin Profiles** — create a profile with read-only access
-3. Go to **System > Administrators** — create a new **REST API admin**:
-   - Assign the read-only profile
-   - Set **Trusted Hosts** to restrict access (recommended)
-4. Copy the generated API token
+You need an API token so the MCP server can read data from your FortiGate. The token should be **read-only** — the MCP server never makes changes.
+
+1. Log into your FortiGate web GUI (e.g., `https://192.168.1.1`)
+2. Go to **System > Admin Profiles**
+   - Click **Create New**
+   - Name it something like `readonly-api`
+   - Set **all permissions to Read** (or Read-Only) — no Write access needed
+   - Click **OK**
+3. Go to **System > Administrators**
+   - Click **Create New > REST API Admin**
+   - Set a username (e.g., `mcp-reader`)
+   - Assign the `readonly-api` profile you just created
+   - Under **Trusted Hosts**, add the IP of the machine that will run the MCP server (e.g., `192.168.1.100/32`). This restricts who can use the token.
+   - Click **OK**
+4. **Copy the API token** that appears — you won't be able to see it again!
+
+> **Important:** Save this token somewhere safe. You'll paste it as the `FORTIGATE_API_KEY` value in your config.
 
 ### FortiAnalyzer API Token
 
-1. Log into the FortiAnalyzer GUI
-2. Go to **System Settings > Admin > Administrators**
-3. Create a new admin with type **REST API Admin**
-4. Assign a read-only admin profile
-5. Copy the generated API token
+If you have a FortiAnalyzer and want centralized log search capabilities:
 
-*Alternatively, you can use username/password authentication (session-based).*
+1. Log into your FortiAnalyzer web GUI (e.g., `https://10.0.0.50`)
+2. Go to **System Settings > Admin > Administrators**
+3. Click **Create New**
+   - Set type to **REST API Admin**
+   - Set a username (e.g., `mcp-reader`)
+   - Assign a read-only admin profile
+4. **Copy the generated API token**
+
+> **Alternative:** If you can't create an API token, you can use username/password authentication instead. Set `FAZ_USER` and `FAZ_PASSWORD` in your config instead of `FAZ_API_TOKEN`. Note: session-based auth has a limit of 32 concurrent sessions per user.
 
 ## Quick Start
 
 ### Option 1: Docker (recommended)
 
+> **What is Docker?** Docker runs the server inside an isolated container. You don't need to install Node.js — Docker handles everything. If you already have Docker installed, this is the easiest option.
+
+**Step 1 — Clone the repo and build the Docker image:**
+
 ```bash
+# Clone the repo (pick any folder you like)
+git clone https://github.com/ivillagomez/fortigate-mcp.git
+
+# Go into the folder
+cd fortigate-mcp
+
+# Build the Docker image (this only needs to be done once)
 docker build -t fortigate-mcp .
 ```
 
-**FortiGate only:**
+**Step 2 — Test that it works:**
+
+Replace the placeholder values with your actual FortiGate IP and API token, then run:
+
 ```bash
+# FortiGate only (minimum setup):
 docker run --rm -i \
   -e FORTIGATE_HOST=192.168.1.1 \
   -e FORTIGATE_API_KEY=your-api-token \
   fortigate-mcp
 ```
 
-**FortiAnalyzer only:**
+> **What do the flags mean?**
+> - `-e FORTIGATE_HOST=...` sets an environment variable inside the container
+> - `--rm` removes the container after it stops (cleanup)
+> - `-i` keeps the input stream open (required for MCP stdio)
+
+You should see `FortiGate MCP Server running on stdio` — press `Ctrl+C` to stop.
+
+<details>
+<summary><strong>FortiAnalyzer only</strong></summary>
+
 ```bash
 docker run --rm -i \
   -e FAZ_HOST=10.0.0.50 \
@@ -112,126 +153,139 @@ docker run --rm -i \
   fortigate-mcp
 ```
 
-**Hybrid (both):**
+Replace `10.0.0.50` with your FortiAnalyzer IP and `your-faz-token` with your API token.
+
+</details>
+
+<details>
+<summary><strong>Hybrid (FortiGate + FortiAnalyzer + SSH)</strong></summary>
+
 ```bash
 docker run --rm -i \
   -e FORTIGATE_HOST=192.168.1.1 \
   -e FORTIGATE_API_KEY=your-fg-token \
+  -e FORTIGATE_SSH_USER=admin \
+  -e FORTIGATE_SSH_PASSWORD=your-ssh-password \
   -e FAZ_HOST=10.0.0.50 \
   -e FAZ_API_TOKEN=your-faz-token \
   fortigate-mcp
 ```
 
+Replace all placeholder values with your actual credentials.
+
+</details>
+
 ### Option 2: Node.js
 
+> **When to use this:** If you don't have Docker, or prefer running Node.js directly. Requires [Node.js 22+](https://nodejs.org/) installed on your machine.
+
+**Step 1 — Clone and build:**
+
 ```bash
+# Clone the repo
+git clone https://github.com/ivillagomez/fortigate-mcp.git
+cd fortigate-mcp
+
+# Install dependencies
 npm install
+
+# Compile TypeScript to JavaScript
 npm run build
 ```
 
-Create a `.env` file (see `.env.example`), then:
+**Step 2 — Create a `.env` file** with your credentials:
 
 ```bash
-FORTIGATE_HOST=192.168.1.1 FORTIGATE_API_KEY=your-api-token node build/index.js
+# Copy the example file
+cp .env.example .env
 ```
 
+Open `.env` in any text editor and fill in your FortiGate IP and API token:
+
+```bash
+FORTIGATE_HOST=192.168.1.1
+FORTIGATE_API_KEY=your-api-token
+```
+
+**Step 3 — Test that it works:**
+
+```bash
+npm start
+```
+
+You should see `FortiGate MCP Server running on stdio` — press `Ctrl+C` to stop.
+
+> **Note:** You don't run `npm start` manually in day-to-day use. Claude Desktop/Code launches the server automatically when it needs it. This test just confirms the build worked.
+
 ## Configuration
+
+> **What are environment variables?** They're settings you pass to the server. In Docker, you use `-e VAR=value`. In Node.js, you put them in a `.env` file. See the examples in [Quick Start](#quick-start) and [Using with Claude Desktop](#using-with-claude-desktop).
 
 ### FortiGate Variables
 
 | Environment Variable | Required | Default | Description |
 |---|---|---|---|
-| `FORTIGATE_HOST` | * | — | FortiGate IP or hostname |
-| `FORTIGATE_API_KEY` | * | — | REST API token |
-| `FORTIGATE_PORT` | No | `443` | HTTPS port |
-| `FORTIGATE_VERIFY_SSL` | No | `false` | Set to `true` if using a valid TLS certificate |
-| `FORTIGATE_VDOM` | No | `root` | VDOM name (safe on non-VDOM firewalls — FortiOS ignores it) |
-| `FORTIGATE_SSH_USER` | No | — | SSH username (enables SSH tools) |
-| `FORTIGATE_SSH_PASSWORD` | No | — | SSH password |
-| `FORTIGATE_SSH_KEY` | No | — | PEM private key (alternative to password) |
-| `FORTIGATE_SSH_PORT` | No | `22` | SSH port |
+| `FORTIGATE_HOST` | **Yes** | — | Your FortiGate's IP address (e.g., `192.168.1.1`) |
+| `FORTIGATE_API_KEY` | **Yes** | — | The API token you created ([see above](#fortigate-api-token)) |
+| `FORTIGATE_PORT` | No | `443` | HTTPS port — only change if your FortiGate uses a non-standard port |
+| `FORTIGATE_VERIFY_SSL` | No | `false` | Set to `true` if your FortiGate has a real (non-self-signed) TLS certificate |
+| `FORTIGATE_VDOM` | No | `root` | VDOM name — safe to ignore if you don't use VDOMs |
+| `FORTIGATE_SSH_USER` | No | — | SSH username — set this to enable `diagnose` commands over SSH |
+| `FORTIGATE_SSH_PASSWORD` | No | — | SSH password for the user above |
+| `FORTIGATE_SSH_KEY` | No | — | PEM private key (alternative to password for SSH) |
+| `FORTIGATE_SSH_PORT` | No | `22` | SSH port — only change if you use a non-standard port |
 
-*\* Required if FortiGate mode is used*
+> **Minimum to get started:** Just `FORTIGATE_HOST` and `FORTIGATE_API_KEY`. Everything else is optional.
 
 ### FortiAnalyzer Variables
 
 | Environment Variable | Required | Default | Description |
 |---|---|---|---|
-| `FAZ_HOST` | * | — | FortiAnalyzer IP or hostname |
-| `FAZ_API_TOKEN` | ** | — | API token (recommended) |
-| `FAZ_USER` | ** | — | Admin username (session-based auth) |
-| `FAZ_PASSWORD` | ** | — | Admin password (session-based auth) |
+| `FAZ_HOST` | **Yes** | — | Your FortiAnalyzer's IP address (e.g., `10.0.0.50`) |
+| `FAZ_API_TOKEN` | **Yes**\* | — | API token (recommended — [see above](#fortianalyzer-api-token)) |
+| `FAZ_USER` | **Yes**\* | — | Admin username (alternative to API token) |
+| `FAZ_PASSWORD` | **Yes**\* | — | Admin password (use with `FAZ_USER`) |
 | `FAZ_PORT` | No | `443` | HTTPS port |
-| `FAZ_ADOM` | No | `root` | Administrative Domain |
-| `FAZ_VERIFY_SSL` | No | `false` | Set to `true` if using a valid TLS certificate |
+| `FAZ_ADOM` | No | `root` | Administrative Domain — change if your devices are in a different ADOM |
+| `FAZ_VERIFY_SSL` | No | `false` | Set to `true` if your FAZ has a real TLS certificate |
 
-*\* Required if FortiAnalyzer mode is used*
-*\*\* Provide either `FAZ_API_TOKEN` or `FAZ_USER` + `FAZ_PASSWORD`*
+> \* **Authentication:** Use **either** `FAZ_API_TOKEN` (recommended) **or** `FAZ_USER` + `FAZ_PASSWORD`. You don't need both.
 
 ## Installing on Unraid
 
-### Option 1: Unraid Terminal
+> **How this works:** This is an MCP server (not a web app). It doesn't run 24/7 — Claude Desktop launches it on-demand when you ask a firewall question, and it shuts down when done. On Unraid, you just need to build the Docker image; Claude Desktop will handle starting/stopping it.
 
-SSH into your Unraid server or open the terminal from the web UI:
+### Step 1 — Build the Docker Image
+
+SSH into your Unraid server (or use the **Terminal** button in the Unraid web UI):
 
 ```bash
-# Clone and build the image
+# Go to your appdata folder (or wherever you keep projects)
 cd /mnt/user/appdata
+
+# Clone the repo
 git clone https://github.com/ivillagomez/fortigate-mcp.git
+
+# Go into the folder
 cd fortigate-mcp
+
+# Build the Docker image
 docker build -t fortigate-mcp .
 ```
 
-The container runs as a **stdio-based MCP server** (not a long-running service), so it doesn't need its own Unraid Docker template. It gets launched on-demand by Claude Desktop or Claude Code when a query is made.
+> **That's it for Unraid.** You don't need to create a Docker container in the Unraid UI — Claude Desktop will run it automatically via SSH.
 
-### Option 2: Unraid Docker UI (Community Applications)
+### Step 2 — Connect Claude Desktop to Unraid
 
-If you prefer using the Unraid GUI:
+On the machine where you use Claude Desktop (your laptop/PC), add this to your `claude_desktop_config.json`:
 
-1. Go to **Docker > Add Container**
-2. Set **Repository** to the path of your built image (`fortigate-mcp`) or build it first via terminal (see above)
-3. Set **Network Type** to `Host` so the container can reach your FortiGate/FAZ on the local network
-4. Click **Add another Path, Port, Variable, Label or Device** for each variable below and configure as follows:
+> **Replace these values:**
+> - `YOUR_UNRAID_IP` — your Unraid server's IP address (e.g., `192.168.1.100`)
+> - `192.168.1.1` — your FortiGate's IP address
+> - `your-api-token` — the FortiGate API token you created
 
-#### FortiGate Variables
-
-| Config Type | Name | Key | Value | Required |
-|---|---|---|---|---|
-| Variable | FortiGate Host | `FORTIGATE_HOST` | Your FortiGate IP (e.g. `192.168.1.1`) | Yes |
-| Variable | FortiGate API Key | `FORTIGATE_API_KEY` | Your REST API token | Yes |
-| Variable | FortiGate Port | `FORTIGATE_PORT` | `443` | No (default: 443) |
-| Variable | Verify SSL | `FORTIGATE_VERIFY_SSL` | `false` | No (default: false) |
-| Variable | VDOM | `FORTIGATE_VDOM` | `root` | No (default: root) |
-
-#### FortiGate SSH Variables (optional — for `diagnose` commands)
-
-| Config Type | Name | Key | Value | Required |
-|---|---|---|---|---|
-| Variable | SSH User | `FORTIGATE_SSH_USER` | SSH admin username | No |
-| Variable | SSH Password | `FORTIGATE_SSH_PASSWORD` | SSH password | No |
-| Variable | SSH Port | `FORTIGATE_SSH_PORT` | `22` | No (default: 22) |
-
-#### FortiAnalyzer Variables (optional)
-
-| Config Type | Name | Key | Value | Required |
-|---|---|---|---|---|
-| Variable | FAZ Host | `FAZ_HOST` | Your FortiAnalyzer IP (e.g. `10.0.0.50`) | Yes (if using FAZ) |
-| Variable | FAZ API Token | `FAZ_API_TOKEN` | Your FAZ API token | Yes* |
-| Variable | FAZ User | `FAZ_USER` | Admin username (alternative to token) | Yes* |
-| Variable | FAZ Password | `FAZ_PASSWORD` | Admin password (alternative to token) | Yes* |
-| Variable | FAZ Port | `FAZ_PORT` | `443` | No (default: 443) |
-| Variable | FAZ ADOM | `FAZ_ADOM` | `root` | No (default: root) |
-| Variable | FAZ Verify SSL | `FAZ_VERIFY_SSL` | `false` | No (default: false) |
-
-*\* Provide either `FAZ_API_TOKEN` or both `FAZ_USER` + `FAZ_PASSWORD`*
-
-> **Note:** No container path or host path is needed for these — they are all **Variable** type configs with just a Key and Value. No ports or volume mappings are required since this is a stdio-based server.
-
-> **Note:** Since this is a stdio MCP server (not a web service), the Unraid Docker UI is mainly useful for pre-building the image. The actual container is launched by Claude Desktop/Code as needed — see the config examples below.
-
-### Connecting Claude to the Unraid-hosted image
-
-On the machine running Claude Desktop or Claude Code, point the MCP config at the Unraid Docker host:
+<details>
+<summary><strong>FortiGate only</strong></summary>
 
 ```json
 {
@@ -243,6 +297,30 @@ On the machine running Claude Desktop or Claude Code, point the MCP config at th
         "docker", "run", "--rm", "-i",
         "-e", "FORTIGATE_HOST=192.168.1.1",
         "-e", "FORTIGATE_API_KEY=your-api-token",
+        "fortigate-mcp"
+      ]
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary><strong>Hybrid (FortiGate + FortiAnalyzer + SSH)</strong></summary>
+
+```json
+{
+  "mcpServers": {
+    "fortigate": {
+      "command": "ssh",
+      "args": [
+        "root@YOUR_UNRAID_IP",
+        "docker", "run", "--rm", "-i",
+        "-e", "FORTIGATE_HOST=192.168.1.1",
+        "-e", "FORTIGATE_API_KEY=your-api-token",
+        "-e", "FORTIGATE_SSH_USER=admin",
+        "-e", "FORTIGATE_SSH_PASSWORD=your-ssh-password",
         "-e", "FAZ_HOST=10.0.0.50",
         "-e", "FAZ_API_TOKEN=your-faz-token",
         "fortigate-mcp"
@@ -252,13 +330,137 @@ On the machine running Claude Desktop or Claude Code, point the MCP config at th
 }
 ```
 
-Or if Claude is running directly on the Unraid server, use the standard Docker config shown below.
+</details>
+
+> **How it works:** Claude Desktop SSHes into your Unraid server and runs `docker run` there. The FortiGate/FAZ queries happen from Unraid's network, so your firewall only needs to be reachable from Unraid — not from your laptop.
+
+> **SSH requirement:** Your laptop must be able to SSH into Unraid without a password prompt. If you haven't set up SSH keys, run this on your laptop first:
+> ```bash
+> ssh-copy-id root@YOUR_UNRAID_IP
+> ```
+
+### Alternative: Unraid Docker UI
+
+If you prefer the Unraid GUI to pre-build the image, you can use **Docker > Add Container**, but note that since this is an MCP stdio server (not a web service), the Unraid Docker UI is only useful for building. The actual container is launched by Claude Desktop via SSH as shown above.
+
+<details>
+<summary><strong>Unraid Docker UI variable reference</strong></summary>
+
+If you want to configure variables through the Unraid GUI, click **Add another Path, Port, Variable, Label or Device** for each:
+
+| Config Type | Name | Key | Example Value | Required |
+|---|---|---|---|---|
+| Variable | FortiGate Host | `FORTIGATE_HOST` | `192.168.1.1` | Yes |
+| Variable | FortiGate API Key | `FORTIGATE_API_KEY` | `your-api-token` | Yes |
+| Variable | FortiGate Port | `FORTIGATE_PORT` | `443` | No |
+| Variable | Verify SSL | `FORTIGATE_VERIFY_SSL` | `false` | No |
+| Variable | VDOM | `FORTIGATE_VDOM` | `root` | No |
+| Variable | SSH User | `FORTIGATE_SSH_USER` | `admin` | No |
+| Variable | SSH Password | `FORTIGATE_SSH_PASSWORD` | `your-password` | No |
+| Variable | SSH Port | `FORTIGATE_SSH_PORT` | `22` | No |
+| Variable | FAZ Host | `FAZ_HOST` | `10.0.0.50` | If using FAZ |
+| Variable | FAZ API Token | `FAZ_API_TOKEN` | `your-faz-token` | If using FAZ |
+| Variable | FAZ User | `FAZ_USER` | `admin` | Alt to token |
+| Variable | FAZ Password | `FAZ_PASSWORD` | `your-password` | Alt to token |
+| Variable | FAZ Port | `FAZ_PORT` | `443` | No |
+| Variable | FAZ ADOM | `FAZ_ADOM` | `root` | No |
+| Variable | FAZ Verify SSL | `FAZ_VERIFY_SSL` | `false` | No |
+
+> No ports or volume mappings are needed — these are all **Variable** type configs with just a Key and Value.
+
+</details>
 
 ## Using with Claude Desktop
 
-Add to your `claude_desktop_config.json`:
+Claude Desktop uses a JSON config file to know which MCP servers to launch. You need to edit this file once, then restart Claude Desktop.
 
-### Docker (hybrid mode example)
+> **Where is `claude_desktop_config.json`?**
+> - **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+>   - Usually: `C:\Users\YourName\AppData\Roaming\Claude\claude_desktop_config.json`
+>   - Quick access: press `Win+R`, type `%APPDATA%\Claude`, hit Enter
+> - **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+>   - In Finder: Go > Go to Folder > paste the path above
+> - **Linux:** `~/.config/Claude/claude_desktop_config.json`
+>
+> If the file doesn't exist yet, create it. After editing, **restart Claude Desktop** for changes to take effect.
+
+### Docker
+
+Pick the example that matches your setup. Replace the placeholder IPs and tokens with your real values.
+
+<details>
+<summary><strong>FortiGate only (simplest setup)</strong></summary>
+
+```json
+{
+  "mcpServers": {
+    "fortigate": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "-e", "FORTIGATE_HOST=192.168.1.1",
+        "-e", "FORTIGATE_API_KEY=your-api-token",
+        "fortigate-mcp"
+      ]
+    }
+  }
+}
+```
+
+> Replace `192.168.1.1` with your FortiGate's IP address and `your-api-token` with the API token you created.
+
+</details>
+
+<details>
+<summary><strong>FortiGate + SSH (adds diagnose commands)</strong></summary>
+
+```json
+{
+  "mcpServers": {
+    "fortigate": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "-e", "FORTIGATE_HOST=192.168.1.1",
+        "-e", "FORTIGATE_API_KEY=your-api-token",
+        "-e", "FORTIGATE_SSH_USER=admin",
+        "-e", "FORTIGATE_SSH_PASSWORD=your-ssh-password",
+        "fortigate-mcp"
+      ]
+    }
+  }
+}
+```
+
+> SSH enables the `execute_cli_ssh` tool for `diagnose` commands. The SSH user should be a read-only admin on the FortiGate.
+
+</details>
+
+<details>
+<summary><strong>FortiAnalyzer only</strong></summary>
+
+```json
+{
+  "mcpServers": {
+    "fortigate": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "-e", "FAZ_HOST=10.0.0.50",
+        "-e", "FAZ_API_TOKEN=your-faz-token",
+        "fortigate-mcp"
+      ]
+    }
+  }
+}
+```
+
+> Replace `10.0.0.50` with your FortiAnalyzer's IP address.
+
+</details>
+
+<details>
+<summary><strong>Hybrid — FortiGate + FortiAnalyzer + SSH (all features)</strong></summary>
 
 ```json
 {
@@ -280,37 +482,228 @@ Add to your `claude_desktop_config.json`:
 }
 ```
 
+> This gives you all 38 tools — live FortiGate status, SSH diagnostics, and FortiAnalyzer centralized log search.
+
+</details>
+
 ### Node.js
 
+The `"args"` field must contain the **full absolute path** to the `build/index.js` file on your machine. This depends on where you cloned or downloaded the repo.
+
+<details>
+<summary><strong>Windows examples</strong></summary>
+
+If you cloned the repo to your Desktop:
 ```json
 {
   "mcpServers": {
     "fortigate": {
       "command": "node",
-      "args": ["path/to/fortigate-mcp/build/index.js"],
+      "args": ["C:\\Users\\YourName\\Desktop\\fortigate-mcp\\build\\index.js"],
       "env": {
         "FORTIGATE_HOST": "192.168.1.1",
-        "FORTIGATE_API_KEY": "your-api-token",
-        "FAZ_HOST": "10.0.0.50",
-        "FAZ_API_TOKEN": "your-faz-token"
+        "FORTIGATE_API_KEY": "your-api-token"
       }
     }
   }
 }
 ```
 
+If you cloned it to a project folder:
+```json
+{
+  "mcpServers": {
+    "fortigate": {
+      "command": "node",
+      "args": ["C:\\Projects\\fortigate-mcp\\build\\index.js"],
+      "env": {
+        "FORTIGATE_HOST": "192.168.1.1",
+        "FORTIGATE_API_KEY": "your-api-token"
+      }
+    }
+  }
+}
+```
+
+> **Tip:** On Windows, use double backslashes (`\\`) in JSON paths, or forward slashes (`/`) — both work with Node.js.
+
+</details>
+
+<details>
+<summary><strong>macOS examples</strong></summary>
+
+If you cloned the repo to your home folder:
+```json
+{
+  "mcpServers": {
+    "fortigate": {
+      "command": "node",
+      "args": ["/Users/yourname/fortigate-mcp/build/index.js"],
+      "env": {
+        "FORTIGATE_HOST": "192.168.1.1",
+        "FORTIGATE_API_KEY": "your-api-token"
+      }
+    }
+  }
+}
+```
+
+If you cloned it to your Documents folder:
+```json
+{
+  "mcpServers": {
+    "fortigate": {
+      "command": "node",
+      "args": ["/Users/yourname/Documents/fortigate-mcp/build/index.js"],
+      "env": {
+        "FORTIGATE_HOST": "192.168.1.1",
+        "FORTIGATE_API_KEY": "your-api-token"
+      }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary><strong>Linux examples</strong></summary>
+
+If you cloned the repo to your home folder:
+```json
+{
+  "mcpServers": {
+    "fortigate": {
+      "command": "node",
+      "args": ["/home/yourname/fortigate-mcp/build/index.js"],
+      "env": {
+        "FORTIGATE_HOST": "192.168.1.1",
+        "FORTIGATE_API_KEY": "your-api-token"
+      }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary><strong>Hybrid mode (FortiGate + FortiAnalyzer + SSH)</strong></summary>
+
+The path works the same way — just add more env vars:
+```json
+{
+  "mcpServers": {
+    "fortigate": {
+      "command": "node",
+      "args": ["C:\\Users\\YourName\\Desktop\\fortigate-mcp\\build\\index.js"],
+      "env": {
+        "FORTIGATE_HOST": "192.168.1.1",
+        "FORTIGATE_API_KEY": "your-fg-api-token",
+        "FORTIGATE_SSH_USER": "admin",
+        "FORTIGATE_SSH_PASSWORD": "your-ssh-password",
+        "FAZ_HOST": "10.0.0.50",
+        "FAZ_API_TOKEN": "your-faz-api-token"
+      }
+    }
+  }
+}
+```
+
+</details>
+
+> **How to find the right path:** Open a terminal, `cd` into your `fortigate-mcp` folder, and run:
+> - **Windows (PowerShell):** `echo "$PWD\build\index.js"`
+> - **macOS / Linux:** `echo "$(pwd)/build/index.js"`
+>
+> Copy the output and paste it into the `"args"` field.
+
+> **Where is `claude_desktop_config.json`?**
+> - **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+> - **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+> - **Linux:** `~/.config/Claude/claude_desktop_config.json`
+>
+> If the file doesn't exist, create it. After editing, **restart Claude Desktop** for changes to take effect.
+
 ## Using with Claude Code
 
-Add to your Claude Code settings or run:
+[Claude Code](https://docs.anthropic.com/en/docs/claude-code) is the CLI version of Claude. You register MCP servers using the `claude mcp add` command.
+
+### Docker
+
+Open a terminal and run **one** of the following commands (pick the one that matches your setup):
+
+<details>
+<summary><strong>FortiGate only</strong></summary>
 
 ```bash
 claude mcp add fortigate -- docker run --rm -i \
   -e FORTIGATE_HOST=192.168.1.1 \
   -e FORTIGATE_API_KEY=your-api-token \
+  fortigate-mcp
+```
+
+</details>
+
+<details>
+<summary><strong>FortiGate + SSH</strong></summary>
+
+```bash
+claude mcp add fortigate -- docker run --rm -i \
+  -e FORTIGATE_HOST=192.168.1.1 \
+  -e FORTIGATE_API_KEY=your-api-token \
+  -e FORTIGATE_SSH_USER=admin \
+  -e FORTIGATE_SSH_PASSWORD=your-ssh-password \
+  fortigate-mcp
+```
+
+</details>
+
+<details>
+<summary><strong>FortiAnalyzer only</strong></summary>
+
+```bash
+claude mcp add fortigate -- docker run --rm -i \
   -e FAZ_HOST=10.0.0.50 \
   -e FAZ_API_TOKEN=your-faz-token \
   fortigate-mcp
 ```
+
+</details>
+
+<details>
+<summary><strong>Hybrid (all features)</strong></summary>
+
+```bash
+claude mcp add fortigate -- docker run --rm -i \
+  -e FORTIGATE_HOST=192.168.1.1 \
+  -e FORTIGATE_API_KEY=your-api-token \
+  -e FORTIGATE_SSH_USER=admin \
+  -e FORTIGATE_SSH_PASSWORD=your-ssh-password \
+  -e FAZ_HOST=10.0.0.50 \
+  -e FAZ_API_TOKEN=your-faz-token \
+  fortigate-mcp
+```
+
+</details>
+
+### Node.js
+
+If you're not using Docker, point Claude Code at the `build/index.js` file directly. Use the **full absolute path** to where you cloned the repo:
+
+```bash
+# Windows example (PowerShell):
+claude mcp add fortigate -- node "C:\Users\YourName\Desktop\fortigate-mcp\build\index.js"
+
+# macOS / Linux example:
+claude mcp add fortigate -- node /home/yourname/fortigate-mcp/build/index.js
+```
+
+> **Note:** When using Node.js with Claude Code, set your environment variables in a `.env` file inside the repo folder (see [Quick Start](#quick-start)), or export them in your shell before running `claude`.
+
+### Verifying
+
+After adding, run `claude mcp list` to confirm the server is registered. Then start a Claude Code session and ask something like "What's the system status of my firewall?"
 
 ## Usage Guide
 
