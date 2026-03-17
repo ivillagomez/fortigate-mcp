@@ -4,6 +4,30 @@ A read-only [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) ser
 
 Built for **FortiOS 7.x** and **FortiAnalyzer 7.x**.
 
+## Table of Contents
+
+- [Deployment Modes](#deployment-modes)
+- [Features](#features)
+- [Prerequisites](#prerequisites)
+- [Creating API Tokens](#creating-api-tokens)
+- [Quick Start](#quick-start)
+- [Configuration](#configuration)
+- [Installing on Unraid](#installing-on-unraid)
+- [Using with Claude Desktop](#using-with-claude-desktop)
+- [Using with Claude Code](#using-with-claude-code)
+- [Usage Guide](#usage-guide)
+  - [How It Works](#how-it-works)
+  - [Verifying the Connection](#verifying-the-connection)
+  - [Available Tools by Category](#available-tools-by-category)
+  - [When to Use FortiGate vs FortiAnalyzer Logs](#when-to-use-fortigate-vs-fortianalyzer-logs)
+  - [Practical Workflows](#practical-workflows)
+  - [SSH vs REST API CLI](#ssh-vs-rest-api-cli)
+  - [Tips](#tips)
+- [Example Queries](#example-queries)
+- [VDOM Support](#vdom-support-multi-vdom-firewalls)
+- [Security Notes](#security-notes)
+- [License](#license)
+
 ## Deployment Modes
 
 | Mode | What you need | Tools available |
