@@ -253,7 +253,7 @@ You should see `FortiGate MCP Server running on stdio` — press `Ctrl+C` to sto
 
 ## Installing on Unraid
 
-> **How this works:** This is an MCP server (not a web app). It doesn't run 24/7 — Claude Desktop launches it on-demand when you ask a firewall question, and it shuts down when done. On Unraid, you just need to build the Docker image; Claude Desktop will handle starting/stopping it.
+> **How this works:** This is an MCP server (not a web app). It doesn't run 24/7 as a container in Unraid's Docker tab. Instead, when you ask Claude a firewall question, Claude Desktop **SSHes into your Unraid server** and runs `docker run` remotely — the container starts, answers the query, and stops automatically. All you need on Unraid is the Docker **image** built and ready; Claude Desktop handles the rest via SSH.
 
 ### Step 1 — Build the Docker Image
 
