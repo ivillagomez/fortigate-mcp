@@ -1,0 +1,20 @@
+{
+  "name": "fortigate-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for FortiGate firewall troubleshooting",
+  "type": "module",
+  "main": "build/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node build/index.js",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "undici": "^7.24.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "typescript": "^5.8.3"
+  }
+}
