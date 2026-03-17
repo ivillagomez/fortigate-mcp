@@ -21,6 +21,21 @@ export interface ApiResponse<T = unknown> {
   revision?: string;
 }
 
+/**
+ * Sanitize a CLI argument to prevent command injection.
+ * Only allows alphanumeric, dots, hyphens, colons, and slashes (for IPs, hostnames, CIDRs).
+ */
+function sanitizeCliArg(input: string): string {
+  const sanitized = input.replace(/[^a-zA-Z0-9.\-_:\/]/g, "");
+  if (sanitized.length === 0) {
+    throw new Error(`Invalid CLI argument: "${input}"`);
+  }
+  if (sanitized !== input) {
+    throw new Error(`CLI argument contains invalid characters: "${input}" (only alphanumeric, dots, hyphens, underscores, colons, slashes allowed)`);
+  }
+  return sanitized;
+}
+
 export class FortiGateAPI {
   private baseUrl: string;
   private headers: Record<string, string>;
@@ -67,10 +82,12 @@ export class FortiGateAPI {
    * Execute a read-only CLI command via the API
    */
   async cli(commands: string[]): Promise<string> {
-    // Safety: block any write/config commands
+    // Safety: block any write/config/destructive commands
     const blocked = [
-      "config ", "set ", "delete ", "edit ", "append ",
+      "config ", "set ", "delete ", "edit ", "append ", "end",
       "execute shutdown", "execute reboot", "execute factoryreset",
+      "execute restore", "execute batch", "execute backup",
+      "execute format", "execute disk",
     ];
     for (const cmd of commands) {
       const lower = cmd.toLowerCase().trim();
@@ -225,32 +242,32 @@ export class FortiGateAPI {
   }
 
   async ping(host: string, count = 4) {
-    return this.cli([`execute ping-options repeat-count ${count}`, `execute ping ${host}`]);
+    const safeHost = sanitizeCliArg(host);
+    const safeCount = Math.max(1, Math.min(count, 20)); // clamp 1-20
+    return this.cli([`execute ping-options repeat-count ${safeCount}`, `execute ping ${safeHost}`]);
   }
 
   async traceroute(host: string) {
-    return this.cli([`execute traceroute ${host}`]);
+    return this.cli([`execute traceroute ${sanitizeCliArg(host)}`]);
   }
 
   async getDnsResolve(hostname: string) {
-    return this.cli([`execute nslookup ${hostname}`]);
+    return this.cli([`execute nslookup ${sanitizeCliArg(hostname)}`]);
   }
 
-  // --- TLS bypass for self-signed certs ---
+  // --- TLS bypass for self-signed certs (per-client, not global) ---
   private unsafeAgent: unknown = null;
 
   private async getUnsafeAgent() {
     if (this.unsafeAgent) return this.unsafeAgent;
     try {
-      const { Agent } = await import("node:https");
-      // For Node's native fetch, we need undici's Agent
       const undici = await import("undici");
       this.unsafeAgent = new undici.Agent({
         connect: { rejectUnauthorized: false },
       });
     } catch {
-      // Fallback: set env variable
-      process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+      // If undici is unavailable, warn but don't disable TLS globally
+      console.error("Warning: Could not create TLS-bypass agent. Self-signed certs may fail. Install 'undici' or set FORTIGATE_VERIFY_SSL=true with a valid certificate.");
     }
     return this.unsafeAgent;
   }

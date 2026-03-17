@@ -33,6 +33,21 @@ interface JsonRpcResponse {
   id: number;
 }
 
+/**
+ * Sanitize a path parameter to prevent path traversal in JSON-RPC URLs.
+ * Only allows alphanumeric, hyphens, underscores, and dots.
+ */
+function sanitizePath(input: string): string {
+  const sanitized = input.replace(/[^a-zA-Z0-9.\-_]/g, "");
+  if (sanitized.length === 0) {
+    throw new Error(`Invalid path parameter: "${input}"`);
+  }
+  if (sanitized !== input) {
+    throw new Error(`Path parameter contains invalid characters: "${input}"`);
+  }
+  return sanitized;
+}
+
 export class FortiAnalyzerAPI {
   private baseUrl: string;
   private session: string | null = null;
@@ -167,7 +182,7 @@ export class FortiAnalyzerAPI {
   }
 
   async listDevices(adom?: string): Promise<unknown> {
-    const targetAdom = adom ?? this.adom;
+    const targetAdom = sanitizePath(adom ?? this.adom);
     return this.withSession(async () => {
       const resp = await this.rpc("get", [{
         url: `/dvmdb/adom/${targetAdom}/device`,
@@ -178,10 +193,11 @@ export class FortiAnalyzerAPI {
   }
 
   async getDevice(deviceName: string, adom?: string): Promise<unknown> {
-    const targetAdom = adom ?? this.adom;
+    const targetAdom = sanitizePath(adom ?? this.adom);
+    const safeDevice = sanitizePath(deviceName);
     return this.withSession(async () => {
       const resp = await this.rpc("get", [{
-        url: `/dvmdb/adom/${targetAdom}/device/${deviceName}`,
+        url: `/dvmdb/adom/${targetAdom}/device/${safeDevice}`,
       }]);
       return resp.result[0].data;
     });
@@ -200,8 +216,8 @@ export class FortiAnalyzerAPI {
     limit?: number;
     adom?: string;
   }): Promise<unknown> {
-    const targetAdom = params.adom ?? this.adom;
-    const limit = params.limit ?? 100;
+    const targetAdom = sanitizePath(params.adom ?? this.adom);
+    const limit = Math.max(1, Math.min(params.limit ?? 100, 1000)); // clamp 1-1000
 
     return this.withSession(async () => {
       // Step 1: Create search task
@@ -376,7 +392,7 @@ export class FortiAnalyzerAPI {
   // -------------------------------------------------------------------------
 
   async listReportTemplates(adom?: string): Promise<unknown> {
-    const targetAdom = adom ?? this.adom;
+    const targetAdom = sanitizePath(adom ?? this.adom);
     return this.withSession(async () => {
       const resp = await this.rpc("get", [{
         url: `/report/adom/${targetAdom}/template/list`,
@@ -386,7 +402,7 @@ export class FortiAnalyzerAPI {
   }
 
   async listReportLayouts(adom?: string): Promise<unknown> {
-    const targetAdom = adom ?? this.adom;
+    const targetAdom = sanitizePath(adom ?? this.adom);
     return this.withSession(async () => {
       const resp = await this.rpc("get", [{
         url: `/report/adom/${targetAdom}/layout/list`,
@@ -420,7 +436,7 @@ export class FortiAnalyzerAPI {
         connect: { rejectUnauthorized: false },
       });
     } catch {
-      process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+      console.error("Warning: Could not create TLS-bypass agent. Self-signed certs may fail. Install 'undici' or set FAZ_VERIFY_SSL=true with a valid certificate.");
     }
     return this.unsafeAgent;
   }

@@ -17,11 +17,12 @@ export interface SshConfig {
   timeout?: number;      // connection timeout in ms (default 10000)
 }
 
-// Same blocked commands as the REST API CLI tool
+// Same blocked commands as the REST API CLI tool — keep in sync with fortigate-api.ts
 const BLOCKED_PREFIXES = [
   "config ", "set ", "delete ", "edit ", "append ", "end",
   "execute shutdown", "execute reboot", "execute factoryreset",
-  "execute restore", "execute batch",
+  "execute restore", "execute batch", "execute backup",
+  "execute format", "execute disk",
 ];
 
 function isBlocked(cmd: string): boolean {
@@ -140,24 +141,31 @@ export class FortiGateSSH {
         port: this.config.port ?? 22,
         username: this.config.username,
         readyTimeout: timeout,
-        // FortiGate uses older algorithms
+        // FortiGate-compatible algorithms — weak ciphers removed
+        // Note: FortiOS 7.x supports modern algorithms; older versions may need
+        // diffie-hellman-group14-sha1 or aes*-cbc added back.
         algorithms: {
           kex: [
             "ecdh-sha2-nistp256", "ecdh-sha2-nistp384", "ecdh-sha2-nistp521",
             "diffie-hellman-group-exchange-sha256", "diffie-hellman-group14-sha256",
-            "diffie-hellman-group14-sha1", "diffie-hellman-group1-sha1",
+            "diffie-hellman-group14-sha1",
+            // "diffie-hellman-group1-sha1" — REMOVED: 768-bit DH, considered broken
           ],
           cipher: [
             "aes128-ctr", "aes192-ctr", "aes256-ctr",
             "aes128-gcm", "aes128-gcm@openssh.com", "aes256-gcm", "aes256-gcm@openssh.com",
-            "aes128-cbc", "aes192-cbc", "aes256-cbc",
+            // CBC ciphers kept for FortiGate compatibility (some older FortiOS versions)
+            "aes128-cbc", "aes256-cbc",
           ],
           hmac: [
-            "hmac-sha2-256", "hmac-sha2-512", "hmac-sha1",
+            "hmac-sha2-256", "hmac-sha2-512",
+            // "hmac-sha1" — REMOVED: deprecated
           ],
           serverHostKey: [
+            "ssh-ed25519",
             "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521",
-            "rsa-sha2-512", "rsa-sha2-256", "ssh-rsa", "ssh-ed25519",
+            "rsa-sha2-512", "rsa-sha2-256",
+            // "ssh-rsa" — REMOVED: SHA-1 signatures deprecated
           ],
         },
       };
