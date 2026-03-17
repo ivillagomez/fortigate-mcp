@@ -68,6 +68,60 @@ FORTIGATE_HOST=192.168.1.1 FORTIGATE_API_KEY=your-api-token node build/index.js
 | `FORTIGATE_PORT` | No | `443` | HTTPS port |
 | `FORTIGATE_VERIFY_SSL` | No | `false` | Set to `true` if using a valid TLS certificate |
 
+## Installing on Unraid
+
+### Option 1: Unraid Terminal
+
+SSH into your Unraid server or open the terminal from the web UI:
+
+```bash
+# Clone and build the image
+cd /mnt/user/appdata
+git clone https://github.com/ivillagomez/fortigate-mcp.git
+cd fortigate-mcp
+docker build -t fortigate-mcp .
+```
+
+The container runs as a **stdio-based MCP server** (not a long-running service), so it doesn't need its own Unraid Docker template. It gets launched on-demand by Claude Desktop or Claude Code when a query is made.
+
+### Option 2: Unraid Docker UI (Community Applications)
+
+If you prefer using the Unraid GUI:
+
+1. Go to **Docker > Add Container**
+2. Set **Repository** to the path of your built image (`fortigate-mcp`) or build it first via terminal (see above)
+3. Add the following environment variables:
+   - `FORTIGATE_HOST` = your FortiGate IP (e.g. `192.168.1.1`)
+   - `FORTIGATE_API_KEY` = your API token
+   - `FORTIGATE_PORT` = `443` (optional)
+   - `FORTIGATE_VERIFY_SSL` = `false` (optional)
+4. Set **Network Type** to `Host` so the container can reach your FortiGate on the local network
+
+> **Note:** Since this is a stdio MCP server (not a web service), the Unraid Docker UI is mainly useful for pre-building the image. The actual container is launched by Claude Desktop/Code as needed — see the config examples below.
+
+### Connecting Claude to the Unraid-hosted image
+
+On the machine running Claude Desktop or Claude Code, point the MCP config at the Unraid Docker host:
+
+```json
+{
+  "mcpServers": {
+    "fortigate": {
+      "command": "ssh",
+      "args": [
+        "root@YOUR_UNRAID_IP",
+        "docker", "run", "--rm", "-i",
+        "-e", "FORTIGATE_HOST=192.168.1.1",
+        "-e", "FORTIGATE_API_KEY=your-api-token",
+        "fortigate-mcp"
+      ]
+    }
+  }
+}
+```
+
+Or if Claude is running directly on the Unraid server, use the standard Docker config shown below.
+
 ## Using with Claude Desktop
 
 Add to your `claude_desktop_config.json`:
