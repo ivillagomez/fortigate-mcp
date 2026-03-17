@@ -1,12 +1,22 @@
-# FortiGate MCP Server
+# FortiGate / FortiAnalyzer MCP Server
 
-A read-only [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server for FortiGate firewalls. Lets AI assistants like Claude query your firewall's status, policies, logs, VPN tunnels, and run diagnostics — all through natural language.
+A read-only [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server for **FortiGate firewalls** and **FortiAnalyzer**. Lets AI assistants like Claude query your firewall's status, policies, logs, VPN tunnels, and run diagnostics — all through natural language.
 
-Built for **FortiOS 7.x** (single firewall, no VDOM).
+Built for **FortiOS 7.x** and **FortiAnalyzer 7.x**.
+
+## Deployment Modes
+
+| Mode | What you need | Tools available |
+|---|---|---|
+| **FortiGate only** | Single firewall REST API + optional SSH | 24 tools — live status, policies, VPN, local logs, diagnostics |
+| **FortiAnalyzer only** | FAZ with managed devices | 15 tools — centralized logs, device inventory, reports |
+| **Both (hybrid)** | FortiGate + FortiAnalyzer | **Up to 38 tools** — FAZ for logs/analytics, FortiGate for live status/diagnostics |
+
+The server auto-detects which backends are configured and registers only the relevant tools.
 
 ## Features
 
-**23 read-only tools** across 5 categories:
+### FortiGate Tools (24)
 
 | Category | Tools |
 |---|---|
@@ -16,15 +26,26 @@ Built for **FortiOS 7.x** (single firewall, no VDOM).
 | **Logs** | Traffic, event, security, and VPN logs with filters |
 | **Diagnostics** | Session table, ping, traceroute, DNS lookup, read-only CLI (REST + SSH) |
 
+### FortiAnalyzer Tools (14)
+
+| Category | Tools |
+|---|---|
+| **System** | FortiAnalyzer status |
+| **Device Management** | List ADOMs, list managed devices, get device details |
+| **Log Search** | Generic search, traffic, event, security, VPN, IPS, web filter, app control, DNS logs |
+| **Reports** | List report templates, list report layouts |
+
 All write operations are blocked — the server will refuse any config/set/delete/reboot commands.
 
 ## Prerequisites
 
-- A FortiGate firewall running FortiOS 7.x
-- A **read-only API token** (see [Creating an API Token](#creating-an-api-token))
-- Docker **or** Node.js 22+
+- **FortiGate**: FortiOS 7.x with a read-only API token
+- **FortiAnalyzer** *(optional)*: FortiAnalyzer 7.x with API token or admin credentials
+- **Runtime**: Docker **or** Node.js 22+
 
-## Creating an API Token
+## Creating API Tokens
+
+### FortiGate API Token
 
 1. Log into the FortiGate GUI
 2. Go to **System > Admin Profiles** — create a profile with read-only access
@@ -33,16 +54,47 @@ All write operations are blocked — the server will refuse any config/set/delet
    - Set **Trusted Hosts** to restrict access (recommended)
 4. Copy the generated API token
 
+### FortiAnalyzer API Token
+
+1. Log into the FortiAnalyzer GUI
+2. Go to **System Settings > Admin > Administrators**
+3. Create a new admin with type **REST API Admin**
+4. Assign a read-only admin profile
+5. Copy the generated API token
+
+*Alternatively, you can use username/password authentication (session-based).*
+
 ## Quick Start
 
 ### Option 1: Docker (recommended)
 
 ```bash
 docker build -t fortigate-mcp .
+```
 
-docker run --rm \
+**FortiGate only:**
+```bash
+docker run --rm -i \
   -e FORTIGATE_HOST=192.168.1.1 \
   -e FORTIGATE_API_KEY=your-api-token \
+  fortigate-mcp
+```
+
+**FortiAnalyzer only:**
+```bash
+docker run --rm -i \
+  -e FAZ_HOST=10.0.0.50 \
+  -e FAZ_API_TOKEN=your-faz-token \
+  fortigate-mcp
+```
+
+**Hybrid (both):**
+```bash
+docker run --rm -i \
+  -e FORTIGATE_HOST=192.168.1.1 \
+  -e FORTIGATE_API_KEY=your-fg-token \
+  -e FAZ_HOST=10.0.0.50 \
+  -e FAZ_API_TOKEN=your-faz-token \
   fortigate-mcp
 ```
 
@@ -61,16 +113,35 @@ FORTIGATE_HOST=192.168.1.1 FORTIGATE_API_KEY=your-api-token node build/index.js
 
 ## Configuration
 
+### FortiGate Variables
+
 | Environment Variable | Required | Default | Description |
 |---|---|---|---|
-| `FORTIGATE_HOST` | Yes | — | FortiGate IP or hostname |
-| `FORTIGATE_API_KEY` | Yes | — | REST API token |
+| `FORTIGATE_HOST` | * | — | FortiGate IP or hostname |
+| `FORTIGATE_API_KEY` | * | — | REST API token |
 | `FORTIGATE_PORT` | No | `443` | HTTPS port |
 | `FORTIGATE_VERIFY_SSL` | No | `false` | Set to `true` if using a valid TLS certificate |
 | `FORTIGATE_SSH_USER` | No | — | SSH username (enables SSH tools) |
 | `FORTIGATE_SSH_PASSWORD` | No | — | SSH password |
 | `FORTIGATE_SSH_KEY` | No | — | PEM private key (alternative to password) |
 | `FORTIGATE_SSH_PORT` | No | `22` | SSH port |
+
+*\* Required if FortiGate mode is used*
+
+### FortiAnalyzer Variables
+
+| Environment Variable | Required | Default | Description |
+|---|---|---|---|
+| `FAZ_HOST` | * | — | FortiAnalyzer IP or hostname |
+| `FAZ_API_TOKEN` | ** | — | API token (recommended) |
+| `FAZ_USER` | ** | — | Admin username (session-based auth) |
+| `FAZ_PASSWORD` | ** | — | Admin password (session-based auth) |
+| `FAZ_PORT` | No | `443` | HTTPS port |
+| `FAZ_ADOM` | No | `root` | Administrative Domain |
+| `FAZ_VERIFY_SSL` | No | `false` | Set to `true` if using a valid TLS certificate |
+
+*\* Required if FortiAnalyzer mode is used*
+*\*\* Provide either `FAZ_API_TOKEN` or `FAZ_USER` + `FAZ_PASSWORD`*
 
 ## Installing on Unraid
 
@@ -97,9 +168,10 @@ If you prefer using the Unraid GUI:
 3. Add the following environment variables:
    - `FORTIGATE_HOST` = your FortiGate IP (e.g. `192.168.1.1`)
    - `FORTIGATE_API_KEY` = your API token
-   - `FORTIGATE_PORT` = `443` (optional)
-   - `FORTIGATE_VERIFY_SSL` = `false` (optional)
-4. Set **Network Type** to `Host` so the container can reach your FortiGate on the local network
+   - `FAZ_HOST` = your FortiAnalyzer IP *(optional)*
+   - `FAZ_API_TOKEN` = your FAZ API token *(optional)*
+   - `FAZ_ADOM` = ADOM name *(optional, default: root)*
+4. Set **Network Type** to `Host` so the container can reach your FortiGate/FAZ on the local network
 
 > **Note:** Since this is a stdio MCP server (not a web service), the Unraid Docker UI is mainly useful for pre-building the image. The actual container is launched by Claude Desktop/Code as needed — see the config examples below.
 
@@ -117,6 +189,8 @@ On the machine running Claude Desktop or Claude Code, point the MCP config at th
         "docker", "run", "--rm", "-i",
         "-e", "FORTIGATE_HOST=192.168.1.1",
         "-e", "FORTIGATE_API_KEY=your-api-token",
+        "-e", "FAZ_HOST=10.0.0.50",
+        "-e", "FAZ_API_TOKEN=your-faz-token",
         "fortigate-mcp"
       ]
     }
@@ -130,7 +204,7 @@ Or if Claude is running directly on the Unraid server, use the standard Docker c
 
 Add to your `claude_desktop_config.json`:
 
-### Docker
+### Docker (hybrid mode example)
 
 ```json
 {
@@ -140,7 +214,11 @@ Add to your `claude_desktop_config.json`:
       "args": [
         "run", "--rm", "-i",
         "-e", "FORTIGATE_HOST=192.168.1.1",
-        "-e", "FORTIGATE_API_KEY=your-api-token",
+        "-e", "FORTIGATE_API_KEY=your-fg-token",
+        "-e", "FORTIGATE_SSH_USER=admin",
+        "-e", "FORTIGATE_SSH_PASSWORD=your-ssh-password",
+        "-e", "FAZ_HOST=10.0.0.50",
+        "-e", "FAZ_API_TOKEN=your-faz-token",
         "fortigate-mcp"
       ]
     }
@@ -158,7 +236,9 @@ Add to your `claude_desktop_config.json`:
       "args": ["path/to/fortigate-mcp/build/index.js"],
       "env": {
         "FORTIGATE_HOST": "192.168.1.1",
-        "FORTIGATE_API_KEY": "your-api-token"
+        "FORTIGATE_API_KEY": "your-api-token",
+        "FAZ_HOST": "10.0.0.50",
+        "FAZ_API_TOKEN": "your-faz-token"
       }
     }
   }
@@ -173,6 +253,8 @@ Add to your Claude Code settings or run:
 claude mcp add fortigate -- docker run --rm -i \
   -e FORTIGATE_HOST=192.168.1.1 \
   -e FORTIGATE_API_KEY=your-api-token \
+  -e FAZ_HOST=10.0.0.50 \
+  -e FAZ_API_TOKEN=your-faz-token \
   fortigate-mcp
 ```
 
@@ -183,8 +265,8 @@ Once the Docker container is built and your Claude Desktop or Claude Code config
 ### How It Works
 
 1. You ask Claude a question about your firewall (in plain English)
-2. Claude picks the right MCP tool(s) and runs them against your FortiGate
-3. The FortiGate REST API responds with live data
+2. Claude picks the right MCP tool(s) — FortiGate REST, SSH, or FortiAnalyzer — based on your question
+3. The API responds with live data
 4. Claude interprets the results and answers your question
 
 The container starts, runs the query, and stops — it doesn't stay running in the background.
@@ -193,13 +275,13 @@ The container starts, runs the query, and stops — it doesn't stay running in t
 
 After setting up the config, restart Claude Desktop (or reload Claude Code), then ask:
 
-> "What's the system status of my firewall?"
+**FortiGate:** "What's the system status of my firewall?"
 
-You should see Claude call the `get_system_status` tool and return your FortiGate's hostname, serial number, firmware version, and uptime. If this works, everything is connected.
+**FortiAnalyzer:** "List all managed devices on my FortiAnalyzer"
 
 ### Available Tools by Category
 
-#### System & Network
+#### FortiGate — System & Network
 | What you can ask | Tool used |
 |---|---|
 | "What's the CPU and memory usage?" | `get_system_performance` |
@@ -208,7 +290,7 @@ You should see Claude call the `get_system_status` tool and return your FortiGat
 | "Show me the ARP table" | `get_arp_table` |
 | "Which IPs have DHCP leases?" | `get_dhcp_leases` |
 
-#### Firewall Policies
+#### FortiGate — Firewall Policies
 | What you can ask | Tool used |
 |---|---|
 | "List all firewall policies" | `get_policies` |
@@ -219,7 +301,7 @@ You should see Claude call the `get_system_status` tool and return your FortiGat
 | "List address groups" | `get_address_groups` |
 | "What service objects are defined?" | `get_service_objects` |
 
-#### VPN
+#### FortiGate — VPN
 | What you can ask | Tool used |
 |---|---|
 | "Are any IPsec tunnels down?" | `get_ipsec_tunnels` |
@@ -227,7 +309,7 @@ You should see Claude call the `get_system_status` tool and return your FortiGat
 | "Show me the Phase 1 config for my VPN" | `get_vpn_phase1_config` |
 | "What's the Phase 2 config?" | `get_vpn_phase2_config` |
 
-#### Logs
+#### FortiGate — Logs (local memory)
 | What you can ask | Tool used |
 |---|---|
 | "Show me denied traffic from the last hour" | `get_traffic_logs` |
@@ -235,7 +317,7 @@ You should see Claude call the `get_system_status` tool and return your FortiGat
 | "Show security events with high severity" | `get_security_logs` |
 | "Show VPN connection/disconnection events" | `get_vpn_event_logs` |
 
-#### Diagnostics
+#### FortiGate — Diagnostics
 | What you can ask | Tool used |
 |---|---|
 | "Show active sessions from 10.0.1.50" | `get_sessions` |
@@ -245,17 +327,59 @@ You should see Claude call the `get_system_status` tool and return your FortiGat
 | "Run `get system status` on the CLI" | `execute_cli` (REST API, read-only) |
 | "Run `diagnose sys session list`" | `execute_cli_ssh` (SSH, read-only) |
 
+#### FortiAnalyzer — Device Management
+| What you can ask | Tool used |
+|---|---|
+| "What's the FortiAnalyzer status?" | `faz_get_status` |
+| "List all ADOMs" | `faz_list_adoms` |
+| "Show all managed FortiGates" | `faz_list_devices` |
+| "Get details for the branch office firewall" | `faz_get_device` |
+
+#### FortiAnalyzer — Log Search (centralized, all devices)
+| What you can ask | Tool used |
+|---|---|
+| "Search traffic logs across all firewalls for the last week" | `faz_traffic_logs` |
+| "Show event logs from FW-BRANCH" | `faz_event_logs` |
+| "Any malware detections across all sites?" | `faz_security_logs` |
+| "Show VPN failures across all FortiGates today" | `faz_vpn_logs` |
+| "IPS alerts from the last 24 hours" | `faz_ips_logs` |
+| "Which URLs were blocked by web filter?" | `faz_webfilter_logs` |
+| "What apps are being detected?" | `faz_appctrl_logs` |
+| "Show DNS query logs" | `faz_dns_logs` |
+| "Search for any log type with custom filters" | `faz_search_logs` |
+
+#### FortiAnalyzer — Reports
+| What you can ask | Tool used |
+|---|---|
+| "What report templates are available?" | `faz_list_report_templates` |
+| "List report layouts" | `faz_list_report_layouts` |
+
+### When to Use FortiGate vs FortiAnalyzer Logs
+
+| Scenario | Best source | Why |
+|---|---|---|
+| "What happened in the last 5 minutes?" | **FortiGate** (`get_traffic_logs`) | Real-time, fastest |
+| "Show me last week's denied traffic" | **FortiAnalyzer** (`faz_traffic_logs`) | Longer retention |
+| "VPN failures across all firewalls" | **FortiAnalyzer** (`faz_vpn_logs`) | Cross-device search |
+| "Is there a VPN tunnel down right now?" | **FortiGate** (`get_ipsec_tunnels`) | Live status |
+| "Run a diagnose command" | **FortiGate SSH** (`execute_cli_ssh`) | Direct access needed |
+
 ### Practical Workflows
 
 **Troubleshooting a user who can't reach a website:**
 > "Can you check if there's a firewall policy allowing traffic from 10.0.1.50 to 203.0.113.10 on port 443? Also show me any denied traffic logs from that source IP in the last 30 minutes."
 
-Claude will run `policy_lookup` and `get_traffic_logs` together and correlate the results.
+Claude will run `policy_lookup` and `get_traffic_logs` (or `faz_traffic_logs`) together and correlate the results.
 
 **VPN troubleshooting:**
 > "My IPsec VPN to the branch office seems down. Can you check the tunnel status, show the Phase 1 and Phase 2 config, and pull any VPN error logs from the last hour?"
 
 Claude will run multiple tools and cross-reference the config with the logs to pinpoint the issue.
+
+**Multi-site security audit (requires FortiAnalyzer):**
+> "Show me all IPS alerts and malware detections across all managed firewalls from the last 7 days. Which device has the most threats?"
+
+Claude will query `faz_ips_logs` and `faz_security_logs` across all devices and summarize.
 
 **Daily health check:**
 > "Give me a quick health check — system performance, any tunnels down, and any high-severity security events today."
@@ -299,6 +423,8 @@ docker run --rm -i \
 - **Use IP addresses** — when troubleshooting, give Claude the specific source/destination IPs for precise results
 - **CLI tools are read-only** — you can run `get`, `show`, and `diagnose` commands, but config changes are blocked
 - **SSH is optional** — only needed for `diagnose` commands that work better over SSH
+- **Use FortiAnalyzer for historical searches** — FAZ has longer log retention and cross-device searching
+- **Specify the device** — when using FAZ tools, mention the device name to narrow results
 
 ## Example Queries
 
@@ -311,13 +437,18 @@ Once connected, you can ask things like:
 - "List all SSL VPN users currently connected"
 - "Ping 8.8.8.8 from the firewall"
 - "Show me unused firewall policies"
+- "List all managed FortiGates on the FortiAnalyzer"
+- "Search traffic logs across all firewalls for blocked traffic from 10.0.1.0/24"
+- "Show VPN failures from all sites in the last 7 days"
+- "What IPS attacks were detected this week?"
 
 ## Security Notes
 
 - The server is **read-only by design** — write commands are blocked at the application level
-- Always use a **read-only API profile** on the FortiGate as a second layer of protection
+- Always use a **read-only API profile** on the FortiGate and FortiAnalyzer as a second layer of protection
 - Restrict the API admin's **Trusted Hosts** to only the machine running this server
-- Never commit your `.env` file or API token to version control
+- Never commit your `.env` file or API tokens to version control
+- FortiAnalyzer session-based auth has a **32 concurrent session limit** per user — prefer API token auth
 
 ## License
 

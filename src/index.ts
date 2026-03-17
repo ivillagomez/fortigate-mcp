@@ -1,10 +1,15 @@
 #!/usr/bin/env node
 /**
- * FortiGate MCP Server
+ * FortiGate / FortiAnalyzer MCP Server
  * Natural language firewall troubleshooting via Model Context Protocol
  *
+ * Supports three deployment modes:
+ *   1. FortiGate only  — single firewall (REST API + optional SSH)
+ *   2. FortiAnalyzer only — centralized logs, device mgmt, reports
+ *   3. Both — FAZ for logs/analytics, FortiGate for live status/diagnostics
+ *
  * Read-only tools for: system status, interfaces, routing, firewall policies,
- * VPN tunnels, logs, sessions, and diagnostics.
+ * VPN tunnels, logs, sessions, reports, and diagnostics.
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -12,10 +17,13 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { FortiGateAPI } from "./fortigate-api.js";
 import { FortiGateSSH } from "./fortigate-ssh.js";
+import { FortiAnalyzerAPI } from "./fortianalyzer-api.js";
 
 // ---------------------------------------------------------------------------
 // Config from environment
 // ---------------------------------------------------------------------------
+
+// FortiGate config (optional when using FAZ-only mode)
 const FG_HOST = process.env.FORTIGATE_HOST;
 const FG_PORT = Number(process.env.FORTIGATE_PORT ?? "443");
 const FG_API_KEY = process.env.FORTIGATE_API_KEY;
@@ -24,34 +32,75 @@ const FG_VERIFY_SSL = process.env.FORTIGATE_VERIFY_SSL === "true";
 // SSH config (optional)
 const FG_SSH_USER = process.env.FORTIGATE_SSH_USER;
 const FG_SSH_PASSWORD = process.env.FORTIGATE_SSH_PASSWORD;
-const FG_SSH_KEY = process.env.FORTIGATE_SSH_KEY;  // PEM private key string or file path
+const FG_SSH_KEY = process.env.FORTIGATE_SSH_KEY;
 const FG_SSH_PORT = Number(process.env.FORTIGATE_SSH_PORT ?? "22");
 
-if (!FG_HOST || !FG_API_KEY) {
-  console.error("Missing required env vars: FORTIGATE_HOST and FORTIGATE_API_KEY");
+// FortiAnalyzer config (optional)
+const FAZ_HOST = process.env.FAZ_HOST;
+const FAZ_PORT = Number(process.env.FAZ_PORT ?? "443");
+const FAZ_USER = process.env.FAZ_USER;
+const FAZ_PASSWORD = process.env.FAZ_PASSWORD;
+const FAZ_API_TOKEN = process.env.FAZ_API_TOKEN;
+const FAZ_ADOM = process.env.FAZ_ADOM ?? "root";
+const FAZ_VERIFY_SSL = process.env.FAZ_VERIFY_SSL === "true";
+
+// Validate: need at least one of FortiGate or FortiAnalyzer
+const hasFG = !!(FG_HOST && FG_API_KEY);
+const hasFAZ = !!(FAZ_HOST && (FAZ_API_TOKEN || (FAZ_USER && FAZ_PASSWORD)));
+
+if (!hasFG && !hasFAZ) {
+  console.error("Missing config: set FORTIGATE_HOST + FORTIGATE_API_KEY and/or FAZ_HOST + FAZ_API_TOKEN (or FAZ_USER + FAZ_PASSWORD)");
   process.exit(1);
 }
 
-const fg = new FortiGateAPI({
-  host: FG_HOST,
-  port: FG_PORT,
-  apiKey: FG_API_KEY,
-  verifySsl: FG_VERIFY_SSL,
-});
+// ---------------------------------------------------------------------------
+// Initialize clients
+// ---------------------------------------------------------------------------
 
-// SSH client — only created if credentials are provided
+let fg: FortiGateAPI | null = null;
+if (hasFG) {
+  fg = new FortiGateAPI({
+    host: FG_HOST!,
+    port: FG_PORT,
+    apiKey: FG_API_KEY!,
+    verifySsl: FG_VERIFY_SSL,
+  });
+  console.error(`FortiGate REST API: ${FG_HOST}:${FG_PORT}`);
+}
+
 let fgSsh: FortiGateSSH | null = null;
 if (FG_SSH_USER && (FG_SSH_PASSWORD || FG_SSH_KEY)) {
   fgSsh = new FortiGateSSH({
-    host: FG_HOST,
+    host: FG_HOST ?? FAZ_HOST!,  // SSH to FortiGate host, or FAZ host as fallback
     port: FG_SSH_PORT,
     username: FG_SSH_USER,
     password: FG_SSH_PASSWORD,
     privateKey: FG_SSH_KEY,
   });
-  console.error(`SSH enabled for ${FG_SSH_USER}@${FG_HOST}:${FG_SSH_PORT}`);
+  console.error(`SSH enabled for ${FG_SSH_USER}@${FG_HOST ?? FAZ_HOST}:${FG_SSH_PORT}`);
+}
+
+let faz: FortiAnalyzerAPI | null = null;
+if (hasFAZ) {
+  faz = new FortiAnalyzerAPI({
+    host: FAZ_HOST!,
+    port: FAZ_PORT,
+    username: FAZ_USER,
+    password: FAZ_PASSWORD,
+    apiToken: FAZ_API_TOKEN,
+    adom: FAZ_ADOM,
+    verifySsl: FAZ_VERIFY_SSL,
+  });
+  console.error(`FortiAnalyzer: ${FAZ_HOST}:${FAZ_PORT} (ADOM: ${FAZ_ADOM})`);
+}
+
+// Log the mode
+if (hasFG && hasFAZ) {
+  console.error("Mode: FortiGate + FortiAnalyzer (hybrid)");
+} else if (hasFAZ) {
+  console.error("Mode: FortiAnalyzer only");
 } else {
-  console.error("SSH not configured (set FORTIGATE_SSH_USER + FORTIGATE_SSH_PASSWORD or FORTIGATE_SSH_KEY to enable)");
+  console.error("Mode: FortiGate only");
 }
 
 // ---------------------------------------------------------------------------
@@ -71,310 +120,325 @@ async function safeCall<T>(fn: () => Promise<T>): Promise<string> {
   }
 }
 
+function requireFG(toolName: string): FortiGateAPI {
+  if (!fg) throw new Error(`${toolName} requires FortiGate REST API (set FORTIGATE_HOST + FORTIGATE_API_KEY)`);
+  return fg;
+}
+
+function requireFAZ(toolName: string): FortiAnalyzerAPI {
+  if (!faz) throw new Error(`${toolName} requires FortiAnalyzer (set FAZ_HOST + FAZ_API_TOKEN or FAZ_USER/FAZ_PASSWORD)`);
+  return faz;
+}
+
 // ---------------------------------------------------------------------------
 // MCP Server
 // ---------------------------------------------------------------------------
 const server = new McpServer({
   name: "fortigate",
-  version: "1.0.0",
+  version: "2.0.0",
 });
 
 // ========================== SYSTEM / NETWORK ===============================
+// (FortiGate REST API tools — registered only if FG is configured)
 
-server.tool(
-  "get_system_status",
-  "Get FortiGate system status: hostname, firmware version, serial, uptime, and resource usage",
-  {},
-  async () => ({
-    content: [{ type: "text", text: await safeCall(() => fg.getSystemStatus()) }],
-  })
-);
+if (hasFG) {
+  server.tool(
+    "get_system_status",
+    "Get FortiGate system status: hostname, firmware version, serial, uptime, and resource usage",
+    {},
+    async () => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_system_status").getSystemStatus()) }],
+    })
+  );
 
-server.tool(
-  "get_system_performance",
-  "Get real-time CPU, memory, and session counts",
-  {},
-  async () => ({
-    content: [{ type: "text", text: await safeCall(() => fg.getSystemPerformance()) }],
-  })
-);
+  server.tool(
+    "get_system_performance",
+    "Get real-time CPU, memory, and session counts",
+    {},
+    async () => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_system_performance").getSystemPerformance()) }],
+    })
+  );
 
-server.tool(
-  "get_interfaces",
-  "List all network interfaces with status, IP, speed, and traffic counters",
-  {},
-  async () => ({
-    content: [{ type: "text", text: await safeCall(() => fg.getInterfaces()) }],
-  })
-);
+  server.tool(
+    "get_interfaces",
+    "List all network interfaces with status, IP, speed, and traffic counters",
+    {},
+    async () => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_interfaces").getInterfaces()) }],
+    })
+  );
 
-server.tool(
-  "get_interface_details",
-  "Get detailed info for a specific interface (status, IP, speed, counters, VLAN)",
-  { name: z.string().describe("Interface name, e.g. 'port1', 'wan1', 'internal'") },
-  async ({ name }) => ({
-    content: [{ type: "text", text: await safeCall(() => fg.getInterfaceDetails(name)) }],
-  })
-);
+  server.tool(
+    "get_interface_details",
+    "Get detailed info for a specific interface (status, IP, speed, counters, VLAN)",
+    { name: z.string().describe("Interface name, e.g. 'port1', 'wan1', 'internal'") },
+    async ({ name }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_interface_details").getInterfaceDetails(name)) }],
+    })
+  );
 
-server.tool(
-  "get_routing_table",
-  "Show the IPv4 routing table (connected, static, dynamic routes)",
-  {},
-  async () => ({
-    content: [{ type: "text", text: await safeCall(() => fg.getRoutingTable()) }],
-  })
-);
+  server.tool(
+    "get_routing_table",
+    "Show the IPv4 routing table (connected, static, dynamic routes)",
+    {},
+    async () => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_routing_table").getRoutingTable()) }],
+    })
+  );
 
-server.tool(
-  "get_arp_table",
-  "Show the ARP table (IP-to-MAC mappings)",
-  {},
-  async () => ({
-    content: [{ type: "text", text: await safeCall(() => fg.getArpTable()) }],
-  })
-);
+  server.tool(
+    "get_arp_table",
+    "Show the ARP table (IP-to-MAC mappings)",
+    {},
+    async () => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_arp_table").getArpTable()) }],
+    })
+  );
 
-server.tool(
-  "get_dhcp_leases",
-  "List active DHCP leases issued by the firewall",
-  {},
-  async () => ({
-    content: [{ type: "text", text: await safeCall(() => fg.getDhcpLeases()) }],
-  })
-);
+  server.tool(
+    "get_dhcp_leases",
+    "List active DHCP leases issued by the firewall",
+    {},
+    async () => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_dhcp_leases").getDhcpLeases()) }],
+    })
+  );
 
-// ========================== FIREWALL POLICIES ==============================
+  // ========================== FIREWALL POLICIES ==============================
 
-server.tool(
-  "get_policies",
-  "List firewall policies. Optionally filter by field (e.g. name, srcintf, dstintf, action)",
-  {
-    filter: z.string().optional().describe(
-      "API filter string, e.g. 'name==@VPN' or 'srcintf==port1'. Use @ for contains match."
-    ),
-  },
-  async ({ filter }) => ({
-    content: [{ type: "text", text: await safeCall(() => fg.getPolicies(filter)) }],
-  })
-);
+  server.tool(
+    "get_policies",
+    "List firewall policies. Optionally filter by field (e.g. name, srcintf, dstintf, action)",
+    {
+      filter: z.string().optional().describe(
+        "API filter string, e.g. 'name==@VPN' or 'srcintf==port1'. Use @ for contains match."
+      ),
+    },
+    async ({ filter }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_policies").getPolicies(filter)) }],
+    })
+  );
 
-server.tool(
-  "get_policy",
-  "Get a specific firewall policy by its ID",
-  { id: z.number().describe("Policy ID number") },
-  async ({ id }) => ({
-    content: [{ type: "text", text: await safeCall(() => fg.getPolicy(id)) }],
-  })
-);
+  server.tool(
+    "get_policy",
+    "Get a specific firewall policy by its ID",
+    { id: z.number().describe("Policy ID number") },
+    async ({ id }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_policy").getPolicy(id)) }],
+    })
+  );
 
-server.tool(
-  "get_policy_hit_count",
-  "Get hit counts and byte/packet counters for all policies (useful for finding unused rules)",
-  {},
-  async () => ({
-    content: [{ type: "text", text: await safeCall(() => fg.getPolicyHitCount()) }],
-  })
-);
+  server.tool(
+    "get_policy_hit_count",
+    "Get hit counts and byte/packet counters for all policies (useful for finding unused rules)",
+    {},
+    async () => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_policy_hit_count").getPolicyHitCount()) }],
+    })
+  );
 
-server.tool(
-  "policy_lookup",
-  "Find which policy matches specific traffic (source/dest IP, port, protocol). Essential for troubleshooting blocked traffic.",
-  {
-    srcintf: z.string().describe("Source interface, e.g. 'port1', 'internal'"),
-    dstintf: z.string().describe("Destination interface, e.g. 'wan1', 'port2'"),
-    sourceip: z.string().describe("Source IP address, e.g. '10.0.1.50'"),
-    destip: z.string().describe("Destination IP address, e.g. '8.8.8.8'"),
-    protocol: z.number().describe("IP protocol number: 6=TCP, 17=UDP, 1=ICMP"),
-    destport: z.number().optional().describe("Destination port (for TCP/UDP), e.g. 443"),
-  },
-  async (params) => ({
-    content: [{ type: "text", text: await safeCall(() => fg.policyLookup(params)) }],
-  })
-);
+  server.tool(
+    "policy_lookup",
+    "Find which policy matches specific traffic (source/dest IP, port, protocol). Essential for troubleshooting blocked traffic.",
+    {
+      srcintf: z.string().describe("Source interface, e.g. 'port1', 'internal'"),
+      dstintf: z.string().describe("Destination interface, e.g. 'wan1', 'port2'"),
+      sourceip: z.string().describe("Source IP address, e.g. '10.0.1.50'"),
+      destip: z.string().describe("Destination IP address, e.g. '8.8.8.8'"),
+      protocol: z.number().describe("IP protocol number: 6=TCP, 17=UDP, 1=ICMP"),
+      destport: z.number().optional().describe("Destination port (for TCP/UDP), e.g. 443"),
+    },
+    async (params) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("policy_lookup").policyLookup(params)) }],
+    })
+  );
 
-server.tool(
-  "get_address_objects",
-  "List firewall address objects (subnets, FQDNs, IP ranges used in policies)",
-  {},
-  async () => ({
-    content: [{ type: "text", text: await safeCall(() => fg.getAddressObjects()) }],
-  })
-);
+  server.tool(
+    "get_address_objects",
+    "List firewall address objects (subnets, FQDNs, IP ranges used in policies)",
+    {},
+    async () => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_address_objects").getAddressObjects()) }],
+    })
+  );
 
-server.tool(
-  "get_address_groups",
-  "List firewall address groups",
-  {},
-  async () => ({
-    content: [{ type: "text", text: await safeCall(() => fg.getAddressGroups()) }],
-  })
-);
+  server.tool(
+    "get_address_groups",
+    "List firewall address groups",
+    {},
+    async () => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_address_groups").getAddressGroups()) }],
+    })
+  );
 
-server.tool(
-  "get_service_objects",
-  "List custom firewall service objects (ports/protocols used in policies)",
-  {},
-  async () => ({
-    content: [{ type: "text", text: await safeCall(() => fg.getServiceObjects()) }],
-  })
-);
+  server.tool(
+    "get_service_objects",
+    "List custom firewall service objects (ports/protocols used in policies)",
+    {},
+    async () => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_service_objects").getServiceObjects()) }],
+    })
+  );
 
-// ========================== VPN ============================================
+  // ========================== VPN ============================================
 
-server.tool(
-  "get_ipsec_tunnels",
-  "Show IPsec VPN tunnel status: phase1/phase2 state, uptime, bytes transferred, remote gateway",
-  {},
-  async () => ({
-    content: [{ type: "text", text: await safeCall(() => fg.getIpsecTunnels()) }],
-  })
-);
+  server.tool(
+    "get_ipsec_tunnels",
+    "Show IPsec VPN tunnel status: phase1/phase2 state, uptime, bytes transferred, remote gateway",
+    {},
+    async () => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_ipsec_tunnels").getIpsecTunnels()) }],
+    })
+  );
 
-server.tool(
-  "get_ssl_vpn_sessions",
-  "List active SSL VPN sessions: connected users, IPs, duration, bandwidth",
-  {},
-  async () => ({
-    content: [{ type: "text", text: await safeCall(() => fg.getSslVpnSessions()) }],
-  })
-);
+  server.tool(
+    "get_ssl_vpn_sessions",
+    "List active SSL VPN sessions: connected users, IPs, duration, bandwidth",
+    {},
+    async () => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_ssl_vpn_sessions").getSslVpnSessions()) }],
+    })
+  );
 
-server.tool(
-  "get_vpn_phase1_config",
-  "Show IPsec Phase 1 configuration (IKE settings, authentication, peer addresses)",
-  {},
-  async () => ({
-    content: [{ type: "text", text: await safeCall(() => fg.getVpnPhase1Config()) }],
-  })
-);
+  server.tool(
+    "get_vpn_phase1_config",
+    "Show IPsec Phase 1 configuration (IKE settings, authentication, peer addresses)",
+    {},
+    async () => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_vpn_phase1_config").getVpnPhase1Config()) }],
+    })
+  );
 
-server.tool(
-  "get_vpn_phase2_config",
-  "Show IPsec Phase 2 configuration (SA proposals, selectors, PFS settings)",
-  {},
-  async () => ({
-    content: [{ type: "text", text: await safeCall(() => fg.getVpnPhase2Config()) }],
-  })
-);
+  server.tool(
+    "get_vpn_phase2_config",
+    "Show IPsec Phase 2 configuration (SA proposals, selectors, PFS settings)",
+    {},
+    async () => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_vpn_phase2_config").getVpnPhase2Config()) }],
+    })
+  );
 
-// ========================== LOGS ===========================================
+  // ========================== FORTIGATE LOGS =================================
 
-server.tool(
-  "get_traffic_logs",
-  "Query recent forward traffic logs. Use filter to narrow by IP, port, policy, action, etc.",
-  {
-    rows: z.number().optional().default(50).describe("Number of log rows to return (default 50, max 1000)"),
-    filter: z.string().optional().describe(
-      "Log filter, e.g. 'srcip==10.0.1.50', 'dstport==443', 'action==deny', 'policyid==5'. Combine with '&&'."
-    ),
-  },
-  async ({ rows, filter }) => ({
-    content: [{ type: "text", text: await safeCall(() => fg.getTrafficLogs(rows, filter)) }],
-  })
-);
+  server.tool(
+    "get_traffic_logs",
+    "Query recent forward traffic logs from FortiGate local memory. Use filter to narrow by IP, port, policy, action.",
+    {
+      rows: z.number().optional().default(50).describe("Number of log rows to return (default 50, max 1000)"),
+      filter: z.string().optional().describe(
+        "Log filter, e.g. 'srcip==10.0.1.50', 'dstport==443', 'action==deny', 'policyid==5'. Combine with '&&'."
+      ),
+    },
+    async ({ rows, filter }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_traffic_logs").getTrafficLogs(rows, filter)) }],
+    })
+  );
 
-server.tool(
-  "get_event_logs",
-  "Query system event logs (config changes, admin logins, HA events, interface changes)",
-  {
-    rows: z.number().optional().default(50).describe("Number of log rows (default 50)"),
-    filter: z.string().optional().describe("Log filter string"),
-  },
-  async ({ rows, filter }) => ({
-    content: [{ type: "text", text: await safeCall(() => fg.getEventLogs(rows, filter)) }],
-  })
-);
+  server.tool(
+    "get_event_logs",
+    "Query system event logs from FortiGate (config changes, admin logins, HA events)",
+    {
+      rows: z.number().optional().default(50).describe("Number of log rows (default 50)"),
+      filter: z.string().optional().describe("Log filter string"),
+    },
+    async ({ rows, filter }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_event_logs").getEventLogs(rows, filter)) }],
+    })
+  );
 
-server.tool(
-  "get_security_logs",
-  "Query UTM/security logs (web filter, antivirus, IPS, app control events)",
-  {
-    rows: z.number().optional().default(50).describe("Number of log rows (default 50)"),
-    filter: z.string().optional().describe("Log filter string"),
-  },
-  async ({ rows, filter }) => ({
-    content: [{ type: "text", text: await safeCall(() => fg.getSecurityLogs(rows, filter)) }],
-  })
-);
+  server.tool(
+    "get_security_logs",
+    "Query UTM/security logs from FortiGate (web filter, antivirus, IPS, app control)",
+    {
+      rows: z.number().optional().default(50).describe("Number of log rows (default 50)"),
+      filter: z.string().optional().describe("Log filter string"),
+    },
+    async ({ rows, filter }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_security_logs").getSecurityLogs(rows, filter)) }],
+    })
+  );
 
-server.tool(
-  "get_vpn_event_logs",
-  "Query VPN event logs (tunnel up/down, authentication failures, phase negotiation)",
-  {
-    rows: z.number().optional().default(50).describe("Number of log rows (default 50)"),
-    filter: z.string().optional().describe("Log filter string"),
-  },
-  async ({ rows, filter }) => ({
-    content: [{ type: "text", text: await safeCall(() => fg.getVpnEventLogs(rows, filter)) }],
-  })
-);
+  server.tool(
+    "get_vpn_event_logs",
+    "Query VPN event logs from FortiGate (tunnel up/down, auth failures, phase negotiation)",
+    {
+      rows: z.number().optional().default(50).describe("Number of log rows (default 50)"),
+      filter: z.string().optional().describe("Log filter string"),
+    },
+    async ({ rows, filter }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_vpn_event_logs").getVpnEventLogs(rows, filter)) }],
+    })
+  );
 
-// ========================== DIAGNOSTICS ====================================
+  // ========================== FORTIGATE DIAGNOSTICS ==========================
 
-server.tool(
-  "get_sessions",
-  "Query the active session table. Use filter to search by IP, port, protocol, or policy.",
-  {
-    filter: z.string().optional().describe(
-      "Session filter, e.g. 'src==10.0.1.50', 'dst==8.8.8.8', 'dport==443', 'proto==6'"
-    ),
-  },
-  async ({ filter }) => ({
-    content: [{ type: "text", text: await safeCall(() => fg.getSessions(filter)) }],
-  })
-);
+  server.tool(
+    "get_sessions",
+    "Query the active session table. Use filter to search by IP, port, protocol, or policy.",
+    {
+      filter: z.string().optional().describe(
+        "Session filter, e.g. 'src==10.0.1.50', 'dst==8.8.8.8', 'dport==443', 'proto==6'"
+      ),
+    },
+    async ({ filter }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("get_sessions").getSessions(filter)) }],
+    })
+  );
 
-server.tool(
-  "ping",
-  "Ping a host from the firewall (useful to test reachability from the FW perspective)",
-  {
-    host: z.string().describe("IP address or hostname to ping"),
-    count: z.number().optional().default(4).describe("Number of ping packets (default 4)"),
-  },
-  async ({ host, count }) => ({
-    content: [{ type: "text", text: await safeCall(() => fg.ping(host, count)) }],
-  })
-);
+  server.tool(
+    "ping",
+    "Ping a host from the firewall (useful to test reachability from the FW perspective)",
+    {
+      host: z.string().describe("IP address or hostname to ping"),
+      count: z.number().optional().default(4).describe("Number of ping packets (default 4)"),
+    },
+    async ({ host, count }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("ping").ping(host, count)) }],
+    })
+  );
 
-server.tool(
-  "traceroute",
-  "Run a traceroute from the firewall to a destination",
-  {
-    host: z.string().describe("IP address or hostname to trace"),
-  },
-  async ({ host }) => ({
-    content: [{ type: "text", text: await safeCall(() => fg.traceroute(host)) }],
-  })
-);
+  server.tool(
+    "traceroute",
+    "Run a traceroute from the firewall to a destination",
+    {
+      host: z.string().describe("IP address or hostname to trace"),
+    },
+    async ({ host }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("traceroute").traceroute(host)) }],
+    })
+  );
 
-server.tool(
-  "dns_lookup",
-  "Resolve a hostname using the firewall's configured DNS servers",
-  {
-    hostname: z.string().describe("Hostname to resolve, e.g. 'google.com'"),
-  },
-  async ({ hostname }) => ({
-    content: [{ type: "text", text: await safeCall(() => fg.getDnsResolve(hostname)) }],
-  })
-);
+  server.tool(
+    "dns_lookup",
+    "Resolve a hostname using the firewall's configured DNS servers",
+    {
+      hostname: z.string().describe("Hostname to resolve, e.g. 'google.com'"),
+    },
+    async ({ hostname }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("dns_lookup").getDnsResolve(hostname)) }],
+    })
+  );
 
-server.tool(
-  "execute_cli",
-  "Execute a read-only CLI command on the FortiGate via REST API. Blocked: config/set/delete/edit/reboot. Use for 'get', 'show', 'diagnose', 'execute' (read-only) commands.",
-  {
-    commands: z.array(z.string()).describe(
-      "Array of CLI commands to execute sequentially, e.g. ['get system interface physical', 'get router info routing-table all']"
-    ),
-  },
-  async ({ commands }) => ({
-    content: [{ type: "text", text: await safeCall(() => fg.cli(commands)) }],
-  })
-);
+  server.tool(
+    "execute_cli",
+    "Execute a read-only CLI command on the FortiGate via REST API. Blocked: config/set/delete/edit/reboot.",
+    {
+      commands: z.array(z.string()).describe(
+        "Array of CLI commands to execute sequentially, e.g. ['get system interface physical', 'get router info routing-table all']"
+      ),
+    },
+    async ({ commands }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFG("execute_cli").cli(commands)) }],
+    })
+  );
+}
+
+// ========================== SSH CLI (available if SSH configured) ===========
 
 server.tool(
   "execute_cli_ssh",
-  "Execute read-only CLI commands over SSH. Better for 'diagnose' commands, debug output, and commands that return richer output than the REST API. Requires SSH to be configured. Blocked: config/set/delete/edit/reboot.",
+  "Execute read-only CLI commands over SSH directly on a FortiGate. Better for 'diagnose' commands and debug output. Blocked: config/set/delete/edit/reboot.",
   {
     commands: z.array(z.string()).describe(
       "Array of CLI commands to execute, e.g. ['diagnose sys session filter clear', 'diagnose sys session filter dport 443', 'diagnose sys session list']"
@@ -395,13 +459,294 @@ server.tool(
   }
 );
 
+// ========================== FORTIANALYZER ===================================
+// (Registered only when FAZ is configured)
+
+if (hasFAZ) {
+
+  // --- FAZ System ---
+
+  server.tool(
+    "faz_get_status",
+    "Get FortiAnalyzer system status: hostname, firmware version, serial number",
+    {},
+    async () => ({
+      content: [{ type: "text", text: await safeCall(() => requireFAZ("faz_get_status").getSystemStatus()) }],
+    })
+  );
+
+  // --- FAZ Device Management ---
+
+  server.tool(
+    "faz_list_adoms",
+    "List all ADOMs (Administrative Domains) on the FortiAnalyzer",
+    {},
+    async () => ({
+      content: [{ type: "text", text: await safeCall(() => requireFAZ("faz_list_adoms").listAdoms()) }],
+    })
+  );
+
+  server.tool(
+    "faz_list_devices",
+    "List all managed FortiGate devices registered on the FortiAnalyzer. Shows name, serial, IP, platform, firmware, and connection status.",
+    {
+      adom: z.string().optional().describe(`ADOM name (default: "${FAZ_ADOM}")`),
+    },
+    async ({ adom }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFAZ("faz_list_devices").listDevices(adom)) }],
+    })
+  );
+
+  server.tool(
+    "faz_get_device",
+    "Get detailed info for a specific managed FortiGate device",
+    {
+      device: z.string().describe("Device name as registered in FortiAnalyzer"),
+      adom: z.string().optional().describe(`ADOM name (default: "${FAZ_ADOM}")`),
+    },
+    async ({ device, adom }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFAZ("faz_get_device").getDevice(device, adom)) }],
+    })
+  );
+
+  // --- FAZ Log Search ---
+
+  server.tool(
+    "faz_search_logs",
+    "Search logs on FortiAnalyzer with powerful filtering. Supports all log types across all managed devices. Use this for historical log analysis, cross-device searches, and longer time ranges than FortiGate local logs.",
+    {
+      logtype: z.enum([
+        "traffic", "event", "virus", "webfilter", "attack", "spam",
+        "anomaly", "dlp", "app-ctrl", "waf", "dns", "ssh", "ssl",
+        "file-filter", "icap", "virtual-patch", "ztna",
+      ]).describe("Log type to search"),
+      filter: z.string().optional().describe(
+        "FAZ filter syntax: 'srcip=10.0.1.50', 'dstport=443', 'action=deny'. Use AND/OR. Contains: msg~\"VPN\". Not: srcip!=10.0.0.1"
+      ),
+      device: z.string().optional().describe("Device name or serial to filter by (default: all devices)"),
+      time_start: z.string().optional().describe("Start time in ISO 8601 format, e.g. '2026-03-17T00:00:00'"),
+      time_end: z.string().optional().describe("End time in ISO 8601 format, e.g. '2026-03-17T23:59:59'"),
+      limit: z.number().optional().default(100).describe("Max results to return (default 100)"),
+      adom: z.string().optional().describe(`ADOM name (default: "${FAZ_ADOM}")`),
+    },
+    async ({ logtype, filter, device, time_start, time_end, limit, adom }) => ({
+      content: [{
+        type: "text",
+        text: await safeCall(() => requireFAZ("faz_search_logs").searchLogs({
+          logtype,
+          filter,
+          device,
+          timeStart: time_start,
+          timeEnd: time_end,
+          limit,
+          adom,
+        })),
+      }],
+    })
+  );
+
+  server.tool(
+    "faz_traffic_logs",
+    "Search traffic logs on FortiAnalyzer across all managed FortiGates. Better than FortiGate local logs for historical searches and cross-device analysis.",
+    {
+      filter: z.string().optional().describe("Filter: 'srcip=10.0.1.50 AND dstport=443 AND action=deny'"),
+      device: z.string().optional().describe("Device name/serial (default: all)"),
+      time_start: z.string().optional().describe("Start time ISO 8601"),
+      time_end: z.string().optional().describe("End time ISO 8601"),
+      limit: z.number().optional().default(100).describe("Max results (default 100)"),
+      adom: z.string().optional().describe(`ADOM (default: "${FAZ_ADOM}")`),
+    },
+    async ({ filter, device, time_start, time_end, limit, adom }) => ({
+      content: [{
+        type: "text",
+        text: await safeCall(() => requireFAZ("faz_traffic_logs").getTrafficLogs({
+          filter, device, timeStart: time_start, timeEnd: time_end, limit, adom,
+        })),
+      }],
+    })
+  );
+
+  server.tool(
+    "faz_event_logs",
+    "Search event logs on FortiAnalyzer (config changes, admin logins, system events across all FortiGates)",
+    {
+      filter: z.string().optional().describe("Filter string"),
+      device: z.string().optional().describe("Device name/serial (default: all)"),
+      time_start: z.string().optional().describe("Start time ISO 8601"),
+      time_end: z.string().optional().describe("End time ISO 8601"),
+      limit: z.number().optional().default(100).describe("Max results (default 100)"),
+      adom: z.string().optional().describe(`ADOM (default: "${FAZ_ADOM}")`),
+    },
+    async ({ filter, device, time_start, time_end, limit, adom }) => ({
+      content: [{
+        type: "text",
+        text: await safeCall(() => requireFAZ("faz_event_logs").getEventLogs({
+          filter, device, timeStart: time_start, timeEnd: time_end, limit, adom,
+        })),
+      }],
+    })
+  );
+
+  server.tool(
+    "faz_security_logs",
+    "Search antivirus/malware logs on FortiAnalyzer across all managed devices",
+    {
+      filter: z.string().optional().describe("Filter string"),
+      device: z.string().optional().describe("Device name/serial (default: all)"),
+      time_start: z.string().optional().describe("Start time ISO 8601"),
+      time_end: z.string().optional().describe("End time ISO 8601"),
+      limit: z.number().optional().default(100).describe("Max results (default 100)"),
+      adom: z.string().optional().describe(`ADOM (default: "${FAZ_ADOM}")`),
+    },
+    async ({ filter, device, time_start, time_end, limit, adom }) => ({
+      content: [{
+        type: "text",
+        text: await safeCall(() => requireFAZ("faz_security_logs").getSecurityLogs({
+          filter, device, timeStart: time_start, timeEnd: time_end, limit, adom,
+        })),
+      }],
+    })
+  );
+
+  server.tool(
+    "faz_vpn_logs",
+    "Search VPN event logs on FortiAnalyzer (tunnel up/down, auth failures across all FortiGates)",
+    {
+      filter: z.string().optional().describe("Additional filter (already filtered to VPN subtype)"),
+      device: z.string().optional().describe("Device name/serial (default: all)"),
+      time_start: z.string().optional().describe("Start time ISO 8601"),
+      time_end: z.string().optional().describe("End time ISO 8601"),
+      limit: z.number().optional().default(100).describe("Max results (default 100)"),
+      adom: z.string().optional().describe(`ADOM (default: "${FAZ_ADOM}")`),
+    },
+    async ({ filter, device, time_start, time_end, limit, adom }) => ({
+      content: [{
+        type: "text",
+        text: await safeCall(() => requireFAZ("faz_vpn_logs").getVpnLogs({
+          filter, device, timeStart: time_start, timeEnd: time_end, limit, adom,
+        })),
+      }],
+    })
+  );
+
+  server.tool(
+    "faz_ips_logs",
+    "Search IPS/intrusion detection logs on FortiAnalyzer",
+    {
+      filter: z.string().optional().describe("Filter string"),
+      device: z.string().optional().describe("Device name/serial (default: all)"),
+      time_start: z.string().optional().describe("Start time ISO 8601"),
+      time_end: z.string().optional().describe("End time ISO 8601"),
+      limit: z.number().optional().default(100).describe("Max results (default 100)"),
+      adom: z.string().optional().describe(`ADOM (default: "${FAZ_ADOM}")`),
+    },
+    async ({ filter, device, time_start, time_end, limit, adom }) => ({
+      content: [{
+        type: "text",
+        text: await safeCall(() => requireFAZ("faz_ips_logs").getIpsLogs({
+          filter, device, timeStart: time_start, timeEnd: time_end, limit, adom,
+        })),
+      }],
+    })
+  );
+
+  server.tool(
+    "faz_webfilter_logs",
+    "Search web filter logs on FortiAnalyzer (blocked URLs, categories, across all FortiGates)",
+    {
+      filter: z.string().optional().describe("Filter string"),
+      device: z.string().optional().describe("Device name/serial (default: all)"),
+      time_start: z.string().optional().describe("Start time ISO 8601"),
+      time_end: z.string().optional().describe("End time ISO 8601"),
+      limit: z.number().optional().default(100).describe("Max results (default 100)"),
+      adom: z.string().optional().describe(`ADOM (default: "${FAZ_ADOM}")`),
+    },
+    async ({ filter, device, time_start, time_end, limit, adom }) => ({
+      content: [{
+        type: "text",
+        text: await safeCall(() => requireFAZ("faz_webfilter_logs").getWebfilterLogs({
+          filter, device, timeStart: time_start, timeEnd: time_end, limit, adom,
+        })),
+      }],
+    })
+  );
+
+  server.tool(
+    "faz_appctrl_logs",
+    "Search application control logs on FortiAnalyzer (app detection, blocking across all FortiGates)",
+    {
+      filter: z.string().optional().describe("Filter string"),
+      device: z.string().optional().describe("Device name/serial (default: all)"),
+      time_start: z.string().optional().describe("Start time ISO 8601"),
+      time_end: z.string().optional().describe("End time ISO 8601"),
+      limit: z.number().optional().default(100).describe("Max results (default 100)"),
+      adom: z.string().optional().describe(`ADOM (default: "${FAZ_ADOM}")`),
+    },
+    async ({ filter, device, time_start, time_end, limit, adom }) => ({
+      content: [{
+        type: "text",
+        text: await safeCall(() => requireFAZ("faz_appctrl_logs").getAppCtrlLogs({
+          filter, device, timeStart: time_start, timeEnd: time_end, limit, adom,
+        })),
+      }],
+    })
+  );
+
+  server.tool(
+    "faz_dns_logs",
+    "Search DNS logs on FortiAnalyzer",
+    {
+      filter: z.string().optional().describe("Filter string"),
+      device: z.string().optional().describe("Device name/serial (default: all)"),
+      time_start: z.string().optional().describe("Start time ISO 8601"),
+      time_end: z.string().optional().describe("End time ISO 8601"),
+      limit: z.number().optional().default(100).describe("Max results (default 100)"),
+      adom: z.string().optional().describe(`ADOM (default: "${FAZ_ADOM}")`),
+    },
+    async ({ filter, device, time_start, time_end, limit, adom }) => ({
+      content: [{
+        type: "text",
+        text: await safeCall(() => requireFAZ("faz_dns_logs").getDnsLogs({
+          filter, device, timeStart: time_start, timeEnd: time_end, limit, adom,
+        })),
+      }],
+    })
+  );
+
+  // --- FAZ Reports ---
+
+  server.tool(
+    "faz_list_report_templates",
+    "List available report templates on FortiAnalyzer",
+    {
+      adom: z.string().optional().describe(`ADOM (default: "${FAZ_ADOM}")`),
+    },
+    async ({ adom }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFAZ("faz_list_report_templates").listReportTemplates(adom)) }],
+    })
+  );
+
+  server.tool(
+    "faz_list_report_layouts",
+    "List available report layouts on FortiAnalyzer",
+    {
+      adom: z.string().optional().describe(`ADOM (default: "${FAZ_ADOM}")`),
+    },
+    async ({ adom }) => ({
+      content: [{ type: "text", text: await safeCall(() => requireFAZ("faz_list_report_layouts").listReportLayouts(adom)) }],
+    })
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Start server
 // ---------------------------------------------------------------------------
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("FortiGate MCP server running on stdio");
+
+  const toolCount = (hasFG ? 23 : 0) + 1 + (hasFAZ ? 14 : 0); // FG tools + SSH + FAZ tools
+  console.error(`FortiGate MCP server running on stdio (${toolCount} tools registered)`);
 }
 
 main().catch((err) => {
