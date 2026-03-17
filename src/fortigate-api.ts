@@ -43,13 +43,14 @@ export class FortiGateAPI {
   private baseUrl: string;
   private headers: Record<string, string>;
   private defaultVdom: string;
+  private apiKey: string;
 
   constructor(private config: FortiGateConfig) {
     const port = config.port ?? 443;
     this.baseUrl = `https://${config.host}:${port}`;
     this.defaultVdom = config.vdom ?? "root";
+    this.apiKey = config.apiKey;
     this.headers = {
-      Authorization: `Bearer ${config.apiKey}`,
       "Content-Type": "application/json",
     };
   }
@@ -72,6 +73,9 @@ export class FortiGateAPI {
     vdom?: string,
   ): Promise<T> {
     const url = new URL(path, this.baseUrl);
+
+    // Auth via query parameter (FortiOS 7.6.x requires this over Bearer header)
+    url.searchParams.set("access_token", this.apiKey);
 
     // Always inject VDOM — safe on non-VDOM firewalls
     url.searchParams.set("vdom", this.getVdom(vdom));
@@ -118,6 +122,7 @@ export class FortiGateAPI {
     }
 
     const url = new URL("/api/v2/monitor/system/cli", this.baseUrl);
+    url.searchParams.set("access_token", this.apiKey);
     url.searchParams.set("vdom", this.getVdom(vdom));
     const resp = await fetch(url.toString(), {
       method: "POST",

@@ -294,13 +294,13 @@ export class FortiAnalyzerAPI {
             url: `/logview/adom/${targetAdom}/logsearch/count/${tid}`,
           }]);
 
-          // Poll response: { result: { progress-percent, matched-logs, ... } }
-          const countResult = resultArray(countResp)[0]?.data ?? countResp.result;
-          const countData = countResult as {
+          // Poll response shape: { result: { progress-percent, matched-logs, ... } }
+          // FAZ returns result as a plain object (not array) for log search operations
+          const countData = (countResp.result ?? {}) as {
             "progress-percent"?: number;
             "matched-logs"?: number;
           };
-          progress = countData?.["progress-percent"] ?? 0;
+          progress = countData["progress-percent"] ?? 0;
         }
 
         // Step 3: Fetch results
@@ -312,14 +312,24 @@ export class FortiAnalyzerAPI {
           offset: 0,
         }]);
 
-        // Extract log entries — FAZ wraps them in result.data (object shape)
-        // or result[0].data (array shape, less common)
-        const fetchResult = resultArray(fetchResp)[0]?.data ?? fetchResp.result;
-        const wrapper = fetchResult as { data?: unknown[]; "total-count"?: number };
-        if (wrapper && Array.isArray(wrapper.data)) {
-          return wrapper.data;
+        // Extract log entries — FAZ returns fetch results as:
+        //   { result: { data: [...logs], total-count, percentage, ... } }
+        // The result is a plain object (not array) with logs nested in .data
+        const fetchResult = fetchResp.result as {
+          data?: unknown[];
+          "total-count"?: number;
+          percentage?: number;
+        } | undefined;
+
+        if (fetchResult && Array.isArray(fetchResult.data)) {
+          return fetchResult.data;
         }
-        return fetchResult;
+
+        // Fallback: try standard array shape (result[0].data)
+        const arrResult = resultArray(fetchResp)[0]?.data;
+        if (arrResult) return arrResult;
+
+        return fetchResult ?? [];
       } finally {
         // Step 4: Cleanup — always delete the search task
         try {
