@@ -334,10 +334,37 @@ On the machine where you use Claude Desktop (your laptop/PC), add this to your `
 
 > **How it works:** Claude Desktop SSHes into your Unraid server and runs `docker run` there. The FortiGate/FAZ queries happen from Unraid's network, so your firewall only needs to be reachable from Unraid — not from your laptop.
 
-> **SSH requirement:** Your laptop must be able to SSH into Unraid without a password prompt. If you haven't set up SSH keys, run this on your laptop first:
+> **SSH key setup (required — one-time):**
+>
+> Claude Desktop cannot type a password, so SSH must work **without a password prompt**. You need to create an SSH key on your laptop and copy it to Unraid. This only needs to be done once.
+>
+> **macOS / Linux:**
 > ```bash
+> # 1. Generate an SSH key (press Enter for all prompts — no passphrase needed)
+> ssh-keygen -t ed25519
+>
+> # 2. Copy the key to your Unraid server (it will ask for your Unraid password ONE time)
 > ssh-copy-id root@YOUR_UNRAID_IP
+>
+> # 3. Test it — this should log in WITHOUT asking for a password
+> ssh root@YOUR_UNRAID_IP echo "SSH key works!"
 > ```
+>
+> **Windows (PowerShell):**
+> ```powershell
+> # 1. Generate an SSH key (press Enter for all prompts — no passphrase needed)
+> ssh-keygen -t ed25519
+>
+> # 2. Copy the key to Unraid (Windows doesn't have ssh-copy-id, so we do it manually)
+> type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh root@YOUR_UNRAID_IP "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys"
+>
+> # 3. Test it — this should log in WITHOUT asking for a password
+> ssh root@YOUR_UNRAID_IP echo "SSH key works!"
+> ```
+>
+> If step 3 still asks for a password, SSH key auth isn't working — double-check that `/root/.ssh/authorized_keys` on Unraid contains your key.
+>
+> **Already have SSH keys?** If you can already `ssh root@YOUR_UNRAID_IP` without a password, skip this step — you're good to go.
 
 ### Alternative: Unraid Docker UI
 
