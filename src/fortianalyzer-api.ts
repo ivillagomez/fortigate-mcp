@@ -17,6 +17,7 @@ export interface FortiAnalyzerConfig {
 }
 
 interface JsonRpcRequest {
+  jsonrpc: string;
   method: string;
   params: Record<string, unknown>[];
   session: string | null;
@@ -76,6 +77,7 @@ export class FortiAnalyzerAPI {
 
   private async rpc(method: string, params: Record<string, unknown>[]): Promise<JsonRpcResponse> {
     const request: JsonRpcRequest = {
+      jsonrpc: "2.0",
       method,
       params,
       session: this.config.apiToken ? null : this.session,
