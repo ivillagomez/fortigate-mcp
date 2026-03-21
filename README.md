@@ -253,7 +253,7 @@ You should see `FortiGate MCP Server running on stdio` — press `Ctrl+C` to sto
 
 ## Installing on Unraid
 
-> **How this works:** This is an MCP server (not a web app). It doesn't run 24/7 as a container in Unraid's Docker tab. Instead, when you ask Claude a firewall question, Claude Desktop **SSHes into your Unraid server** and runs `docker run` remotely — the container starts, answers the query, and stops automatically. All you need on Unraid is the Docker **image** built and ready; Claude Desktop handles the rest via SSH.
+> **How this works:** This is an MCP server (not a web app). It doesn't run 24/7 as a container in Unraid's Docker tab. When you ask Claude a firewall question, Claude Desktop connects to Unraid's Docker daemon remotely and runs `docker run` — the container starts, answers the query, and stops automatically. All you need on Unraid is the Docker **image** built and the Docker TCP socket enabled.
 
 ### Step 1 — Build the Docker Image
 
@@ -273,9 +273,26 @@ cd fortigate-mcp
 docker build -t fortigate-mcp .
 ```
 
-> **That's it for Unraid.** You don't need to create a Docker container in the Unraid UI — Claude Desktop will run it automatically via SSH.
+### Step 2 — Enable Docker TCP Socket on Unraid
 
-### Step 2 — Connect Claude Desktop to Unraid
+Claude Desktop needs to reach Unraid's Docker daemon over the network. Enable this once by appending a line to Unraid's Docker config:
+
+```bash
+echo 'DOCKER_OPTS="-H tcp://0.0.0.0:2375 -H unix:///var/run/docker.sock"' >> /boot/config/docker.cfg
+/etc/rc.d/rc.docker restart
+```
+
+Verify it's working:
+
+```bash
+docker -H tcp://YOUR_UNRAID_IP:2375 info
+```
+
+> **This persists across reboots** — `/boot/config/docker.cfg` is on the flash drive and survives restarts.
+
+> **Security note:** Port 2375 is unencrypted. This is fine on a trusted local network. Do not expose this port to the internet.
+
+### Step 3 — Connect Claude Desktop
 
 On the machine where you use Claude Desktop (your laptop/PC), add this to your `claude_desktop_config.json`:
 
@@ -291,10 +308,10 @@ On the machine where you use Claude Desktop (your laptop/PC), add this to your `
 {
   "mcpServers": {
     "fortigate": {
-      "command": "ssh",
+      "command": "docker",
       "args": [
-        "root@YOUR_UNRAID_IP",
-        "docker", "run", "--rm", "-i",
+        "-H", "tcp://YOUR_UNRAID_IP:2375",
+        "run", "--rm", "-i",
         "-e", "FORTIGATE_HOST=192.168.1.1",
         "-e", "FORTIGATE_API_KEY=your-api-token",
         "fortigate-mcp"
@@ -313,10 +330,10 @@ On the machine where you use Claude Desktop (your laptop/PC), add this to your `
 {
   "mcpServers": {
     "fortigate": {
-      "command": "ssh",
+      "command": "docker",
       "args": [
-        "root@YOUR_UNRAID_IP",
-        "docker", "run", "--rm", "-i",
+        "-H", "tcp://YOUR_UNRAID_IP:2375",
+        "run", "--rm", "-i",
         "-e", "FORTIGATE_HOST=192.168.1.1",
         "-e", "FORTIGATE_API_KEY=your-api-token",
         "-e", "FORTIGATE_SSH_USER=admin",
@@ -332,43 +349,53 @@ On the machine where you use Claude Desktop (your laptop/PC), add this to your `
 
 </details>
 
-> **How it works:** Claude Desktop SSHes into your Unraid server and runs `docker run` there. The FortiGate/FAZ queries happen from Unraid's network, so your firewall only needs to be reachable from Unraid — not from your laptop.
+> **How it works:** Claude Desktop uses the Docker CLI on your local machine with `-H tcp://YOUR_UNRAID_IP:2375` to run the container on Unraid. The FortiGate/FAZ queries happen from Unraid's network, so your firewall only needs to be reachable from Unraid — not from your laptop.
 
-> **SSH key setup (required — one-time):**
->
-> Claude Desktop cannot type a password, so SSH must work **without a password prompt**. You need to create an SSH key on your laptop and copy it to Unraid. This only needs to be done once.
->
-> **macOS / Linux:**
-> ```bash
-> # 1. Generate an SSH key (press Enter for all prompts — no passphrase needed)
-> ssh-keygen -t ed25519
->
-> # 2. Copy the key to your Unraid server (it will ask for your Unraid password ONE time)
-> ssh-copy-id root@YOUR_UNRAID_IP
->
-> # 3. Test it — this should log in WITHOUT asking for a password
-> ssh root@YOUR_UNRAID_IP echo "SSH key works!"
-> ```
->
-> **Windows (PowerShell):**
-> ```powershell
-> # 1. Generate an SSH key (press Enter for all prompts — no passphrase needed)
-> ssh-keygen -t ed25519
->
-> # 2. Copy the key to Unraid (Windows doesn't have ssh-copy-id, so we do it manually)
-> type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh root@YOUR_UNRAID_IP "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys"
->
-> # 3. Test it — this should log in WITHOUT asking for a password
-> ssh root@YOUR_UNRAID_IP echo "SSH key works!"
-> ```
->
-> If step 3 still asks for a password, SSH key auth isn't working — double-check that `/root/.ssh/authorized_keys` on Unraid contains your key.
->
-> **Already have SSH keys?** If you can already `ssh root@YOUR_UNRAID_IP` without a password, skip this step — you're good to go.
+> **Prerequisite:** Docker must be installed on the machine running Claude Desktop (Docker Desktop for Windows/macOS). The Docker CLI is used to connect remotely — nothing runs locally.
 
-### Alternative: Unraid Docker UI
+### Alternative: SSH approach
 
-If you prefer the Unraid GUI to pre-build the image, you can use **Docker > Add Container**, but note that since this is an MCP stdio server (not a web service), the Unraid Docker UI is only useful for building. The actual container is launched by Claude Desktop via SSH as shown above.
+If you cannot or prefer not to expose the Docker TCP socket, the original SSH method still works. It requires a passwordless SSH key from your laptop to Unraid.
+
+<details>
+<summary><strong>SSH config example</strong></summary>
+
+```json
+{
+  "mcpServers": {
+    "fortigate": {
+      "command": "ssh",
+      "args": [
+        "root@YOUR_UNRAID_IP",
+        "docker", "run", "--rm", "-i",
+        "-e", "FORTIGATE_HOST=192.168.1.1",
+        "-e", "FORTIGATE_API_KEY=your-api-token",
+        "fortigate-mcp"
+      ]
+    }
+  }
+}
+```
+
+**SSH key setup (one-time):**
+
+macOS / Linux:
+```bash
+ssh-keygen -t ed25519
+ssh-copy-id root@YOUR_UNRAID_IP
+ssh root@YOUR_UNRAID_IP echo "SSH key works!"
+```
+
+Windows (PowerShell):
+```powershell
+ssh-keygen -t ed25519
+type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh root@YOUR_UNRAID_IP "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys"
+ssh root@YOUR_UNRAID_IP echo "SSH key works!"
+```
+
+</details>
+
+### Unraid Docker UI
 
 <details>
 <summary><strong>Unraid Docker UI variable reference</strong></summary>
