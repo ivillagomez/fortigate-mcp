@@ -311,7 +311,7 @@ On the machine where you use Claude Desktop (your laptop/PC), add this to your `
       "command": "docker",
       "args": [
         "-H", "tcp://YOUR_UNRAID_IP:2375",
-        "run", "--rm", "-i",
+        "run", "--rm", "-i", "--name", "fortigate-mcp",
         "-e", "FORTIGATE_HOST=192.168.1.1",
         "-e", "FORTIGATE_API_KEY=your-api-token",
         "fortigate-mcp"
@@ -333,7 +333,7 @@ On the machine where you use Claude Desktop (your laptop/PC), add this to your `
       "command": "docker",
       "args": [
         "-H", "tcp://YOUR_UNRAID_IP:2375",
-        "run", "--rm", "-i",
+        "run", "--rm", "-i", "--name", "fortigate-mcp",
         "-e", "FORTIGATE_HOST=192.168.1.1",
         "-e", "FORTIGATE_API_KEY=your-api-token",
         "-e", "FORTIGATE_SSH_USER=admin",
