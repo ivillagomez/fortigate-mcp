@@ -14,6 +14,8 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { createServer } from "node:http";
 import { z } from "zod";
 import { FortiGateAPI } from "./fortigate-api.js";
 import { FortiGateSSH } from "./fortigate-ssh.js";
@@ -133,18 +135,19 @@ function requireFAZ(toolName: string): FortiAnalyzerAPI {
 }
 
 // ---------------------------------------------------------------------------
-// MCP Server
+// MCP Server factory — one instance per connection (required for SSE multi-user)
 // ---------------------------------------------------------------------------
-const server = new McpServer({
-  name: "fortigate",
-  version: "2.0.0",
-});
+function createMcpServer(): McpServer {
+  const server = new McpServer({
+    name: "fortigate",
+    version: "2.0.0",
+  });
 
-// ========================== SYSTEM / NETWORK ===============================
-// (FortiGate REST API tools — registered only if FG is configured)
+  // ========================== SYSTEM / NETWORK ===============================
+  // (FortiGate REST API tools — registered only if FG is configured)
 
-// Helper: VDOM description for tool parameters
-const vdomDesc = `VDOM name to query (default: "${FG_VDOM}"). On non-VDOM firewalls, this is safely ignored.`;
+  // Helper: VDOM description for tool parameters
+  const vdomDesc = `VDOM name to query (default: "${FG_VDOM}"). On non-VDOM firewalls, this is safely ignored.`;
 
 if (hasFG) {
   server.tool(
@@ -788,15 +791,65 @@ if (hasFAZ) {
   );
 }
 
+  return server;
+}
+
 // ---------------------------------------------------------------------------
 // Start server
 // ---------------------------------------------------------------------------
 async function main() {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+  const toolCount = (hasFG ? 23 : 0) + 1 + (hasFAZ ? 14 : 0);
+  const mcpTransport = process.env.MCP_TRANSPORT ?? "stdio";
+  const mcpPort = Number(process.env.MCP_PORT ?? "3000");
 
-  const toolCount = (hasFG ? 23 : 0) + 1 + (hasFAZ ? 14 : 0); // FG tools + SSH + FAZ tools
-  console.error(`FortiGate MCP server running on stdio (${toolCount} tools registered)`);
+  if (mcpTransport === "sse") {
+    const transports = new Map<string, SSEServerTransport>();
+
+    const httpServer = createServer(async (req, res) => {
+      const url = new URL(req.url ?? "/", "http://localhost");
+
+      if (req.method === "GET" && url.pathname === "/sse") {
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        const server = createMcpServer();
+        const transport = new SSEServerTransport("/message", res);
+        transports.set(transport.sessionId, transport);
+        req.on("close", () => {
+          transports.delete(transport.sessionId);
+          console.error(`SSE client disconnected (session: ${transport.sessionId})`);
+        });
+        console.error(`SSE client connected (session: ${transport.sessionId})`);
+        await server.connect(transport);
+
+      } else if (req.method === "POST" && url.pathname === "/message") {
+        const sessionId = url.searchParams.get("sessionId") ?? "";
+        const transport = transports.get(sessionId);
+        if (transport) {
+          await transport.handlePostMessage(req, res);
+        } else {
+          res.writeHead(400, { "Content-Type": "text/plain" });
+          res.end("Unknown or expired session");
+        }
+
+      } else if (req.method === "GET" && url.pathname === "/health") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "ok", activeSessions: transports.size }));
+
+      } else {
+        res.writeHead(404);
+        res.end("Not found");
+      }
+    });
+
+    httpServer.listen(mcpPort, "0.0.0.0", () => {
+      console.error(`FortiGate MCP server running on http://0.0.0.0:${mcpPort}/sse (${toolCount} tools)`);
+    });
+
+  } else {
+    const server = createMcpServer();
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+    console.error(`FortiGate MCP server running on stdio (${toolCount} tools registered)`);
+  }
 }
 
 main().catch((err) => {

@@ -20,5 +20,12 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 COPY --from=builder /app/build/ ./build/
+
+# MCP_TRANSPORT=sse enables HTTP/SSE mode (for OVA/shared deployments)
+# MCP_TRANSPORT=stdio (default) for Docker/Claude Desktop usage
+ENV MCP_TRANSPORT=stdio
+ENV MCP_PORT=3000
+
+EXPOSE 3000
 USER node
 ENTRYPOINT ["node", "build/index.js"]
