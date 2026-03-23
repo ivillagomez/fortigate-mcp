@@ -801,35 +801,12 @@ async function main() {
   const toolCount = (hasFG ? 23 : 0) + 1 + (hasFAZ ? 14 : 0);
   const mcpTransport = process.env.MCP_TRANSPORT ?? "stdio";
   const mcpPort = Number(process.env.MCP_PORT ?? "3000");
-  const mcpAuthToken = process.env.MCP_AUTH_TOKEN;
-
-  // Auth check helper — returns true if the request is authorized
-  function isAuthorized(req: import("node:http").IncomingMessage): boolean {
-    if (!mcpAuthToken) return true; // no auth configured → open
-    const header = req.headers["authorization"] ?? "";
-    return header === `Bearer ${mcpAuthToken}`;
-  }
 
   if (mcpTransport === "sse") {
     const transports = new Map<string, SSEServerTransport>();
 
     const httpServer = createServer(async (req, res) => {
       const url = new URL(req.url ?? "/", "http://localhost");
-
-      // Health check is intentionally unauthenticated (used by Docker/infra probes)
-      if (req.method === "GET" && url.pathname === "/health") {
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ status: "ok", activeSessions: transports.size }));
-        return;
-      }
-
-      // All other endpoints require auth when MCP_AUTH_TOKEN is set
-      if (!isAuthorized(req)) {
-        res.writeHead(401, { "Content-Type": "text/plain", "WWW-Authenticate": "Bearer" });
-        res.end("Unauthorized: missing or invalid Bearer token");
-        console.error(`[AUTH] Rejected request from ${req.socket.remoteAddress} — invalid token`);
-        return;
-      }
 
       if (req.method === "GET" && url.pathname === "/sse") {
         res.setHeader("Access-Control-Allow-Origin", "*");
@@ -840,7 +817,7 @@ async function main() {
           transports.delete(transport.sessionId);
           console.error(`SSE client disconnected (session: ${transport.sessionId})`);
         });
-        console.error(`SSE client connected from ${req.socket.remoteAddress} (session: ${transport.sessionId})`);
+        console.error(`SSE client connected (session: ${transport.sessionId})`);
         await server.connect(transport);
 
       } else if (req.method === "POST" && url.pathname === "/message") {
@@ -853,6 +830,10 @@ async function main() {
           res.end("Unknown or expired session");
         }
 
+      } else if (req.method === "GET" && url.pathname === "/health") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "ok", activeSessions: transports.size }));
+
       } else {
         res.writeHead(404);
         res.end("Not found");
@@ -860,8 +841,7 @@ async function main() {
     });
 
     httpServer.listen(mcpPort, "0.0.0.0", () => {
-      const authStatus = mcpAuthToken ? "auth enabled" : "WARNING: no auth token set";
-      console.error(`FortiGate MCP server running on http://0.0.0.0:${mcpPort}/sse (${toolCount} tools, ${authStatus})`);
+      console.error(`FortiGate MCP server running on http://0.0.0.0:${mcpPort}/sse (${toolCount} tools)`);
     });
 
   } else {
