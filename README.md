@@ -13,6 +13,7 @@ Built for **FortiOS 7.x** and **FortiAnalyzer 7.x**.
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
 - [Installing on Unraid](#installing-on-unraid)
+- [SSE Transport (HTTP Mode)](#sse-transport-http-mode)
 - [Using with Claude Desktop](#using-with-claude-desktop)
 - [Using with Claude Code](#using-with-claude-code)
 - [Usage Guide](#usage-guide)
@@ -130,7 +131,7 @@ Replace the placeholder values with your actual FortiGate IP and API token, then
 
 ```bash
 # FortiGate only (minimum setup):
-docker run --rm -i \
+docker run --rm -i --name fortigate-mcp \
   -e FORTIGATE_HOST=192.168.1.1 \
   -e FORTIGATE_API_KEY=your-api-token \
   fortigate-mcp
@@ -147,7 +148,7 @@ You should see `FortiGate MCP Server running on stdio` — press `Ctrl+C` to sto
 <summary><strong>FortiAnalyzer only</strong></summary>
 
 ```bash
-docker run --rm -i \
+docker run --rm -i --name fortigate-mcp \
   -e FAZ_HOST=10.0.0.50 \
   -e FAZ_API_TOKEN=your-faz-token \
   fortigate-mcp
@@ -161,7 +162,7 @@ Replace `10.0.0.50` with your FortiAnalyzer IP and `your-faz-token` with your AP
 <summary><strong>Hybrid (FortiGate + FortiAnalyzer + SSH)</strong></summary>
 
 ```bash
-docker run --rm -i \
+docker run --rm -i --name fortigate-mcp \
   -e FORTIGATE_HOST=192.168.1.1 \
   -e FORTIGATE_API_KEY=your-fg-token \
   -e FORTIGATE_SSH_USER=admin \
@@ -367,7 +368,7 @@ If you cannot or prefer not to expose the Docker TCP socket, the original SSH me
       "command": "ssh",
       "args": [
         "root@YOUR_UNRAID_IP",
-        "docker", "run", "--rm", "-i",
+        "docker", "run", "--rm", "-i", "--name", "fortigate-mcp",
         "-e", "FORTIGATE_HOST=192.168.1.1",
         "-e", "FORTIGATE_API_KEY=your-api-token",
         "fortigate-mcp"
@@ -424,6 +425,85 @@ If you want to configure variables through the Unraid GUI, click **Add another P
 
 </details>
 
+## SSE Transport (HTTP Mode)
+
+By default, the server uses **stdio** transport — Claude Desktop or Claude Code launches the container, talks to it over stdin/stdout, and the container exits when the conversation ends. This is the simplest setup and what most of the examples in this README use.
+
+**SSE (Server-Sent Events) transport** runs the server as a long-lived HTTP service instead. This is useful when:
+
+- **Multiple users** need to share a single server instance (e.g., a team deployment)
+- **Web-based MCP clients** that connect over HTTP rather than spawning a local process
+- **OVA or appliance deployments** where the server runs on a dedicated VM and clients connect remotely
+- **Always-on environments** where you want the server listening on a port rather than starting/stopping per query
+
+### Environment Variables
+
+| Variable | Values | Default | Description |
+|---|---|---|---|
+| `MCP_TRANSPORT` | `stdio` or `sse` | `stdio` | Transport mode. Set to `sse` to enable HTTP mode. |
+| `MCP_PORT` | Any port number | `3000` | The port the HTTP server listens on (only used in SSE mode). |
+
+### Running in SSE Mode
+
+**Docker:**
+
+```bash
+docker run -d --name fortigate-mcp \
+  -p 3000:3000 \
+  -e MCP_TRANSPORT=sse \
+  -e FORTIGATE_HOST=192.168.1.1 \
+  -e FORTIGATE_API_KEY=your-api-token \
+  fortigate-mcp
+```
+
+> **What changed vs stdio?**
+> - `-d` runs the container in the background (detached) instead of `-i` (interactive)
+> - `-p 3000:3000` maps the container's port to your host
+> - `-e MCP_TRANSPORT=sse` switches to HTTP mode
+> - The container stays running and listens for connections on port 3000
+
+**Node.js:**
+
+```bash
+MCP_TRANSPORT=sse MCP_PORT=3000 npm start
+```
+
+On Windows (PowerShell):
+```powershell
+$env:MCP_TRANSPORT="sse"; $env:MCP_PORT="3000"; npm start
+```
+
+### Available Endpoints
+
+Once the server is running in SSE mode, it exposes three endpoints:
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/sse` | Opens an SSE connection. Each connected client gets its own MCP server instance and session ID. |
+| `POST` | `/message?sessionId=<id>` | Sends a JSON-RPC message to the MCP server for the given session. The session ID comes from the SSE connection. |
+| `GET` | `/health` | Health check. Returns `{"status":"ok","activeSessions":N}` — useful for monitoring and load balancer probes. |
+
+### Claude Desktop Config for SSE Mode
+
+If the SSE server is running on another machine (e.g., an Unraid server at `192.168.1.100`), you can point Claude Desktop at it using the `url` transport type:
+
+```json
+{
+  "mcpServers": {
+    "fortigate": {
+      "transport": "sse",
+      "url": "http://192.168.1.100:3000/sse"
+    }
+  }
+}
+```
+
+> **No `command` or `args` needed** — Claude Desktop connects to the already-running server over HTTP instead of launching a container.
+
+> **When to use stdio vs SSE:**
+> - **stdio** (default) — simplest setup. Claude launches and stops the container automatically. Best for single-user, local use.
+> - **SSE** — server runs 24/7 and accepts connections. Best for multi-user, remote, or always-on deployments.
+
 ## Using with Claude Desktop
 
 Claude Desktop uses a JSON config file to know which MCP servers to launch. You need to edit this file once, then restart Claude Desktop.
@@ -451,7 +531,7 @@ Pick the example that matches your setup. Replace the placeholder IPs and tokens
     "fortigate": {
       "command": "docker",
       "args": [
-        "run", "--rm", "-i",
+        "run", "--rm", "-i", "--name", "fortigate-mcp",
         "-e", "FORTIGATE_HOST=192.168.1.1",
         "-e", "FORTIGATE_API_KEY=your-api-token",
         "fortigate-mcp"
@@ -474,7 +554,7 @@ Pick the example that matches your setup. Replace the placeholder IPs and tokens
     "fortigate": {
       "command": "docker",
       "args": [
-        "run", "--rm", "-i",
+        "run", "--rm", "-i", "--name", "fortigate-mcp",
         "-e", "FORTIGATE_HOST=192.168.1.1",
         "-e", "FORTIGATE_API_KEY=your-api-token",
         "-e", "FORTIGATE_SSH_USER=admin",
@@ -499,7 +579,7 @@ Pick the example that matches your setup. Replace the placeholder IPs and tokens
     "fortigate": {
       "command": "docker",
       "args": [
-        "run", "--rm", "-i",
+        "run", "--rm", "-i", "--name", "fortigate-mcp",
         "-e", "FAZ_HOST=10.0.0.50",
         "-e", "FAZ_API_TOKEN=your-faz-token",
         "fortigate-mcp"
@@ -522,7 +602,7 @@ Pick the example that matches your setup. Replace the placeholder IPs and tokens
     "fortigate": {
       "command": "docker",
       "args": [
-        "run", "--rm", "-i",
+        "run", "--rm", "-i", "--name", "fortigate-mcp",
         "-e", "FORTIGATE_HOST=192.168.1.1",
         "-e", "FORTIGATE_API_KEY=your-fg-token",
         "-e", "FORTIGATE_SSH_USER=admin",
@@ -691,7 +771,7 @@ Open a terminal and run **one** of the following commands (pick the one that mat
 <summary><strong>FortiGate only</strong></summary>
 
 ```bash
-claude mcp add fortigate -- docker run --rm -i \
+claude mcp add fortigate -- docker run --rm -i --name fortigate-mcp \
   -e FORTIGATE_HOST=192.168.1.1 \
   -e FORTIGATE_API_KEY=your-api-token \
   fortigate-mcp
@@ -703,7 +783,7 @@ claude mcp add fortigate -- docker run --rm -i \
 <summary><strong>FortiGate + SSH</strong></summary>
 
 ```bash
-claude mcp add fortigate -- docker run --rm -i \
+claude mcp add fortigate -- docker run --rm -i --name fortigate-mcp \
   -e FORTIGATE_HOST=192.168.1.1 \
   -e FORTIGATE_API_KEY=your-api-token \
   -e FORTIGATE_SSH_USER=admin \
@@ -717,7 +797,7 @@ claude mcp add fortigate -- docker run --rm -i \
 <summary><strong>FortiAnalyzer only</strong></summary>
 
 ```bash
-claude mcp add fortigate -- docker run --rm -i \
+claude mcp add fortigate -- docker run --rm -i --name fortigate-mcp \
   -e FAZ_HOST=10.0.0.50 \
   -e FAZ_API_TOKEN=your-faz-token \
   fortigate-mcp
@@ -729,7 +809,7 @@ claude mcp add fortigate -- docker run --rm -i \
 <summary><strong>Hybrid (all features)</strong></summary>
 
 ```bash
-claude mcp add fortigate -- docker run --rm -i \
+claude mcp add fortigate -- docker run --rm -i --name fortigate-mcp \
   -e FORTIGATE_HOST=192.168.1.1 \
   -e FORTIGATE_API_KEY=your-api-token \
   -e FORTIGATE_SSH_USER=admin \
@@ -904,7 +984,7 @@ The server has two CLI tools:
 SSH is **optional** — the server works fine with just the REST API. Add SSH credentials when you need deeper diagnostics:
 
 ```bash
-docker run --rm -i \
+docker run --rm -i --name fortigate-mcp \
   -e FORTIGATE_HOST=192.168.1.1 \
   -e FORTIGATE_API_KEY=your-api-token \
   -e FORTIGATE_SSH_USER=admin \
@@ -960,7 +1040,7 @@ The server supports FortiGate **Virtual Domains (VDOMs)** for multi-tenant envir
 Set the default VDOM via environment variable:
 
 ```bash
-docker run --rm -i \
+docker run --rm -i --name fortigate-mcp \
   -e FORTIGATE_HOST=192.168.1.1 \
   -e FORTIGATE_API_KEY=your-api-token \
   -e FORTIGATE_VDOM=customer-a \
