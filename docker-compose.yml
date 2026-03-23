@@ -1,0 +1,44 @@
+services:
+  fortigate-mcp:
+    build: .
+    image: ${CUSTOMER_NAME:-fortigate}-mcp:latest
+    container_name: ${CUSTOMER_NAME:-fortigate}-mcp
+    restart: unless-stopped
+    ports:
+      - "${MCP_PORT:-3000}:3000"
+    environment:
+      MCP_TRANSPORT: "sse"
+      MCP_PORT: "3000"
+
+      # ── Security ─────────────────────────────────────────────────────────────
+      # Shared secret — consultants must pass this as: Authorization: Bearer <token>
+      # Generate with: openssl rand -hex 32
+      MCP_AUTH_TOKEN: "${MCP_AUTH_TOKEN}"
+
+      # ── FortiGate REST API ────────────────────────────────────────────────────
+      FORTIGATE_HOST: "${FORTIGATE_HOST:-}"
+      FORTIGATE_PORT: "${FORTIGATE_PORT:-443}"
+      FORTIGATE_API_KEY: "${FORTIGATE_API_KEY:-}"
+      FORTIGATE_VERIFY_SSL: "${FORTIGATE_VERIFY_SSL:-false}"
+      FORTIGATE_VDOM: "${FORTIGATE_VDOM:-root}"
+
+      # ── FortiGate SSH (optional) ──────────────────────────────────────────────
+      FORTIGATE_SSH_USER: "${FORTIGATE_SSH_USER:-}"
+      FORTIGATE_SSH_PASSWORD: "${FORTIGATE_SSH_PASSWORD:-}"
+      FORTIGATE_SSH_PORT: "${FORTIGATE_SSH_PORT:-22}"
+
+      # ── FortiAnalyzer ─────────────────────────────────────────────────────────
+      FAZ_HOST: "${FAZ_HOST:-}"
+      FAZ_PORT: "${FAZ_PORT:-443}"
+      FAZ_API_TOKEN: "${FAZ_API_TOKEN:-}"
+      FAZ_USER: "${FAZ_USER:-}"
+      FAZ_PASSWORD: "${FAZ_PASSWORD:-}"
+      FAZ_ADOM: "${FAZ_ADOM:-root}"
+      FAZ_VERIFY_SSL: "${FAZ_VERIFY_SSL:-false}"
+
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
