@@ -15,7 +15,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
-import { createServer } from "node:http";
+import { createServer, IncomingMessage } from "node:http";
 import { z } from "zod";
 import { FortiGateAPI } from "./fortigate-api.js";
 import { FortiGateSSH } from "./fortigate-ssh.js";
@@ -803,36 +803,110 @@ async function main() {
   const mcpPort = Number(process.env.MCP_PORT ?? "3000");
 
   if (mcpTransport === "sse") {
-    const transports = new Map<string, SSEServerTransport>();
+    const SSE_AUTH_TOKEN   = process.env.MCP_AUTH_TOKEN ?? "";
+    const SSE_MAX_SESSIONS = Number(process.env.MCP_MAX_SESSIONS ?? "10");
+    const SSE_SESSION_TTL  = Number(process.env.MCP_SESSION_TTL_MS ?? String(30 * 60 * 1000));
+    const SSE_RATE_LIMIT   = Number(process.env.MCP_RATE_LIMIT ?? "60"); // requests/min/session
+
+    if (!SSE_AUTH_TOKEN) {
+      console.error("WARNING: MCP_AUTH_TOKEN is not set — SSE endpoint is unauthenticated. Set MCP_AUTH_TOKEN for production use.");
+    }
+
+    interface SessionEntry {
+      transport: SSEServerTransport;
+      timer: ReturnType<typeof setTimeout>;
+      rateCount: number;
+      rateReset: number;
+    }
+    const sessions = new Map<string, SessionEntry>();
+
+    function deleteSession(sessionId: string) {
+      const entry = sessions.get(sessionId);
+      if (entry) {
+        clearTimeout(entry.timer);
+        sessions.delete(sessionId);
+        console.error(`SSE session removed (session: ${sessionId}, active: ${sessions.size})`);
+      }
+    }
+
+    function checkAuth(req: IncomingMessage): boolean {
+      if (!SSE_AUTH_TOKEN) return true; // no token configured — open (warned above)
+      const header = (req.headers["authorization"] ?? "").trim();
+      return header === `Bearer ${SSE_AUTH_TOKEN}`;
+    }
 
     const httpServer = createServer(async (req, res) => {
       const url = new URL(req.url ?? "/", "http://localhost");
 
+      // Auth check on all non-health endpoints
+      if (url.pathname !== "/health" && !checkAuth(req)) {
+        res.writeHead(401, { "Content-Type": "text/plain", "WWW-Authenticate": "Bearer" });
+        res.end("Unauthorized");
+        return;
+      }
+
       if (req.method === "GET" && url.pathname === "/sse") {
+        // Session cap
+        if (sessions.size >= SSE_MAX_SESSIONS) {
+          res.writeHead(503, { "Content-Type": "text/plain" });
+          res.end("Too many active sessions");
+          return;
+        }
+
         res.setHeader("Access-Control-Allow-Origin", "*");
         const server = createMcpServer();
         const transport = new SSEServerTransport("/message", res);
-        transports.set(transport.sessionId, transport);
+        const sessionId = transport.sessionId;
+
+        // Session TTL — auto-expire idle/orphaned sessions
+        const timer = setTimeout(() => {
+          console.error(`SSE session expired (session: ${sessionId})`);
+          deleteSession(sessionId);
+        }, SSE_SESSION_TTL);
+
+        sessions.set(sessionId, { transport, timer, rateCount: 0, rateReset: Date.now() + 60_000 });
+
         req.on("close", () => {
-          transports.delete(transport.sessionId);
-          console.error(`SSE client disconnected (session: ${transport.sessionId})`);
+          deleteSession(sessionId);
+          console.error(`SSE client disconnected (session: ${sessionId})`);
         });
-        console.error(`SSE client connected (session: ${transport.sessionId})`);
+
+        console.error(`SSE client connected (session: ${sessionId}, active: ${sessions.size})`);
         await server.connect(transport);
 
       } else if (req.method === "POST" && url.pathname === "/message") {
         const sessionId = url.searchParams.get("sessionId") ?? "";
-        const transport = transports.get(sessionId);
-        if (transport) {
-          await transport.handlePostMessage(req, res);
-        } else {
+        const entry = sessions.get(sessionId);
+        if (!entry) {
           res.writeHead(400, { "Content-Type": "text/plain" });
           res.end("Unknown or expired session");
+          return;
         }
+
+        // Rate limiting — sliding window per session
+        const now = Date.now();
+        if (now > entry.rateReset) {
+          entry.rateCount = 0;
+          entry.rateReset = now + 60_000;
+        }
+        if (++entry.rateCount > SSE_RATE_LIMIT) {
+          res.writeHead(429, { "Content-Type": "text/plain" });
+          res.end("Rate limit exceeded — try again in a moment");
+          return;
+        }
+
+        // Reset TTL on activity
+        clearTimeout(entry.timer);
+        entry.timer = setTimeout(() => {
+          console.error(`SSE session expired (session: ${sessionId})`);
+          deleteSession(sessionId);
+        }, SSE_SESSION_TTL);
+
+        await entry.transport.handlePostMessage(req, res);
 
       } else if (req.method === "GET" && url.pathname === "/health") {
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ status: "ok", activeSessions: transports.size }));
+        res.end(JSON.stringify({ status: "ok" }));
 
       } else {
         res.writeHead(404);
@@ -841,7 +915,7 @@ async function main() {
     });
 
     httpServer.listen(mcpPort, "0.0.0.0", () => {
-      console.error(`FortiGate MCP server running on http://0.0.0.0:${mcpPort}/sse (${toolCount} tools)`);
+      console.error(`FortiGate MCP server running on http://0.0.0.0:${mcpPort}/sse (${toolCount} tools, max sessions: ${SSE_MAX_SESSIONS}, session TTL: ${SSE_SESSION_TTL / 1000}s, rate limit: ${SSE_RATE_LIMIT} req/min)`);
     });
 
   } else {
