@@ -472,19 +472,23 @@ If you want to configure variables through the Unraid GUI, click **Add another P
 By default, the server uses **stdio** transport — Claude Desktop or Claude Code launches the container, talks to it over stdin/stdout, and the container exits when the conversation ends. This is the simplest setup and what most of the examples in this README use.
 
 ```mermaid
-graph LR
-    subgraph stdio["stdio — default, single user"]
-        CD1["Claude Desktop\nor Claude Code"]
-        MCP1["fortigate-mcp"]
-        CD1 <-->|"stdin / stdout"| MCP1
-    end
+graph TB
+    subgraph transport["Transport — how Claude talks to the server"]
+        subgraph stdio["stdio (default) — Claude launches &amp; owns the process"]
+            direction LR
+            CD1["Claude Desktop\nor Claude Code"]
+            MCP1["fortigate-mcp\nDocker or Node.js"]
+            CD1 <-->|"stdin / stdout"| MCP1
+        end
 
-    subgraph sse["SSE / HTTP — multi-user, always-on"]
-        CD2["Claude Desktop"]
-        CC2["Claude Code"]
-        MCP2["fortigate-mcp\n:3000"]
-        CD2 <-->|"HTTP · Bearer token"| MCP2
-        CC2 <-->|"HTTP · Bearer token"| MCP2
+        subgraph sse["SSE / HTTP — server runs independently, clients connect"]
+            direction LR
+            CD2["Claude Desktop"]
+            CC2["Claude Code"]
+            MCP2["fortigate-mcp\nDocker or Node.js\n:3000"]
+            CD2 <-->|"HTTP · Bearer token"| MCP2
+            CC2 <-->|"HTTP · Bearer token"| MCP2
+        end
     end
 ```
 
