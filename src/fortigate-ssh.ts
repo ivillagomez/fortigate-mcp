@@ -3,7 +3,7 @@
  * Executes CLI commands over SSH — useful for diagnose commands
  * and deeper troubleshooting not available via the REST API.
  *
- * Read-only: blocks the same write commands as the REST CLI tool.
+ * Read-only: permits only known read-only command prefixes.
  */
 
 import { Client } from "ssh2";
@@ -17,17 +17,15 @@ export interface SshConfig {
   timeout?: number;      // connection timeout in ms (default 10000)
 }
 
-// Same blocked commands as the REST API CLI tool — keep in sync with fortigate-api.ts
-const BLOCKED_PREFIXES = [
-  "config ", "set ", "delete ", "edit ", "append ", "end",
-  "execute shutdown", "execute reboot", "execute factoryreset",
-  "execute restore", "execute batch", "execute backup",
-  "execute format", "execute disk",
+// Allowlist of read-only command prefixes — keep in sync with fortigate-api.ts
+const ALLOWED_PREFIXES = [
+  "get ", "show ", "diagnose ", "execute ping", "execute traceroute",
+  "execute nslookup", "execute ping-options",
 ];
 
-function isBlocked(cmd: string): boolean {
+function isAllowed(cmd: string): boolean {
   const lower = cmd.toLowerCase().trim();
-  return BLOCKED_PREFIXES.some((b) => lower.startsWith(b));
+  return ALLOWED_PREFIXES.some((a) => lower.startsWith(a));
 }
 
 export class FortiGateSSH {
@@ -38,10 +36,10 @@ export class FortiGateSSH {
    * Returns the combined output from all commands.
    */
   async execute(commands: string[]): Promise<string> {
-    // Safety check
+    // Safety check — allowlist only
     for (const cmd of commands) {
-      if (isBlocked(cmd)) {
-        throw new Error(`Blocked: "${cmd}" is a write operation. This server is read-only.`);
+      if (!isAllowed(cmd)) {
+        throw new Error(`Blocked: "${cmd}" is not a permitted read-only command. This server is read-only.`);
       }
     }
 
@@ -148,14 +146,13 @@ export class FortiGateSSH {
           kex: [
             "ecdh-sha2-nistp256", "ecdh-sha2-nistp384", "ecdh-sha2-nistp521",
             "diffie-hellman-group-exchange-sha256", "diffie-hellman-group14-sha256",
-            "diffie-hellman-group14-sha1",
-            // "diffie-hellman-group1-sha1" — REMOVED: 768-bit DH, considered broken
+            // "diffie-hellman-group14-sha1" — REMOVED: SHA-1 deprecated
+            // "diffie-hellman-group1-sha1"  — REMOVED: 768-bit DH, broken
           ],
           cipher: [
             "aes128-ctr", "aes192-ctr", "aes256-ctr",
             "aes128-gcm", "aes128-gcm@openssh.com", "aes256-gcm", "aes256-gcm@openssh.com",
-            // CBC ciphers kept for FortiGate compatibility (some older FortiOS versions)
-            "aes128-cbc", "aes256-cbc",
+            // "aes128-cbc", "aes256-cbc" — REMOVED: CBC mode deprecated (Lucky13)
           ],
           hmac: [
             "hmac-sha2-256", "hmac-sha2-512",

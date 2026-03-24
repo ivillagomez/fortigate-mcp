@@ -9,7 +9,7 @@ export interface FortiGateConfig {
   host: string;       // e.g. "192.168.1.1" or "fw.example.com"
   port?: number;      // default 443
   apiKey: string;     // API token generated in FortiGate GUI
-  verifySsl?: boolean; // default false (self-signed certs are common)
+  verifySsl?: boolean; // default true — set to false only for self-signed certs in isolated lab environments
   vdom?: string;      // default "root" — safe on non-VDOM firewalls (FortiOS ignores it)
 }
 
@@ -105,19 +105,15 @@ export class FortiGateAPI {
    * Execute a read-only CLI command via the API
    */
   async cli(commands: string[], vdom?: string): Promise<string> {
-    // Safety: block any write/config/destructive commands
-    const blocked = [
-      "config ", "set ", "delete ", "edit ", "append ", "end",
-      "execute shutdown", "execute reboot", "execute factoryreset",
-      "execute restore", "execute batch", "execute backup",
-      "execute format", "execute disk",
+    // Safety: allowlist of read-only command prefixes only
+    const ALLOWED_PREFIXES = [
+      "get ", "show ", "diagnose ", "execute ping", "execute traceroute",
+      "execute nslookup", "execute ping-options",
     ];
     for (const cmd of commands) {
       const lower = cmd.toLowerCase().trim();
-      for (const b of blocked) {
-        if (lower.startsWith(b)) {
-          throw new Error(`Blocked: "${cmd}" is a write operation. This server is read-only.`);
-        }
+      if (!ALLOWED_PREFIXES.some((a) => lower.startsWith(a))) {
+        throw new Error(`Blocked: "${cmd}" is not a permitted read-only command. This server is read-only.`);
       }
     }
 
