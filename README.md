@@ -4,6 +4,20 @@ A read-only [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) ser
 
 Built for **FortiOS 7.x** and **FortiAnalyzer 7.x**.
 
+```mermaid
+graph LR
+    Claude["Claude\nClaude Desktop / Claude Code"]
+    MCP["fortigate-mcp\nMCP Server"]
+    FG["FortiGate\nREST API · SSH"]
+    FAZ["FortiAnalyzer\nJSON-RPC"]
+
+    Claude <-->|"MCP Protocol\nstdio or SSE/HTTP"| MCP
+    MCP -->|"HTTPS REST API"| FG
+    MCP -->|"SSH optional"| FG
+    MCP -->|"HTTPS JSON-RPC"| FAZ
+    FAZ -.-|"managed devices"| FG
+```
+
 ## Table of Contents
 
 - [Deployment Modes](#deployment-modes)
@@ -31,11 +45,18 @@ Built for **FortiOS 7.x** and **FortiAnalyzer 7.x**.
 
 ## Deployment Modes
 
-| Mode | What you need | Tools available |
-|---|---|---|
-| **FortiGate only** | Single firewall REST API + optional SSH | 24 tools — live status, policies, VPN, local logs, diagnostics |
-| **FortiAnalyzer only** | FAZ with managed devices | 15 tools — centralized logs, device inventory, reports |
-| **Both (hybrid)** | FortiGate + FortiAnalyzer | **Up to 38 tools** — FAZ for logs/analytics, FortiGate for live status/diagnostics |
+```mermaid
+graph TD
+    ENV{Which env vars\nare set?}
+
+    ENV -->|"FORTIGATE_HOST\nFORTIGATE_API_KEY"| FG
+    ENV -->|"FAZ_HOST\nFAZ_API_TOKEN"| FAZ
+    ENV -->|Both| HYB
+
+    FG["FortiGate Only\n──────────────\n24 tools\nlive status · policies\nVPN · local logs\ndiagnostics"]
+    FAZ["FortiAnalyzer Only\n──────────────\n15 tools\ncentralized logs\ndevice inventory · reports"]
+    HYB["Hybrid\n──────────────\nUp to 38 tools\nFAZ for logs & analytics\nFortiGate for live data"]
+```
 
 The server auto-detects which backends are configured and registers only the relevant tools.
 
@@ -59,6 +80,27 @@ The server auto-detects which backends are configured and registers only the rel
 | **Device Management** | List ADOMs, list managed devices, get device details |
 | **Log Search** | Generic search, traffic, event, security, VPN, IPS, web filter, app control, DNS logs |
 | **Reports** | List report templates, list report layouts |
+
+> **Note:** FortiAnalyzer log searches are asynchronous. The server handles the full 4-step flow transparently:
+>
+> ```mermaid
+> sequenceDiagram
+>     participant Claude
+>     participant MCP as fortigate-mcp
+>     participant FAZ as FortiAnalyzer
+>
+>     Claude->>MCP: search_faz_logs(filter, rows)
+>     MCP->>FAZ: 1. Create log query task
+>     FAZ-->>MCP: { tid: 12345 }
+>     loop Poll until 100%
+>         MCP->>FAZ: 2. Get task progress
+>         FAZ-->>MCP: { progress-percent: 60 }
+>     end
+>     MCP->>FAZ: 3. Fetch results
+>     FAZ-->>MCP: { data: [...], total-count: 150 }
+>     MCP->>FAZ: 4. Cleanup task
+>     MCP-->>Claude: Formatted log results
+> ```
 
 All write operations are blocked — the server will refuse any config/set/delete/reboot commands.
 
@@ -428,6 +470,23 @@ If you want to configure variables through the Unraid GUI, click **Add another P
 ## SSE Transport (HTTP Mode)
 
 By default, the server uses **stdio** transport — Claude Desktop or Claude Code launches the container, talks to it over stdin/stdout, and the container exits when the conversation ends. This is the simplest setup and what most of the examples in this README use.
+
+```mermaid
+graph LR
+    subgraph stdio["stdio — default, single user"]
+        CD1["Claude Desktop\nor Claude Code"]
+        MCP1["fortigate-mcp"]
+        CD1 <-->|"stdin / stdout"| MCP1
+    end
+
+    subgraph sse["SSE / HTTP — multi-user, always-on"]
+        CD2["Claude Desktop"]
+        CC2["Claude Code"]
+        MCP2["fortigate-mcp\n:3000"]
+        CD2 <-->|"HTTP · Bearer token"| MCP2
+        CC2 <-->|"HTTP · Bearer token"| MCP2
+    end
+```
 
 **SSE (Server-Sent Events) transport** runs the server as a long-lived HTTP service instead. This is useful when:
 
