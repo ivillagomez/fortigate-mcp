@@ -124,12 +124,18 @@ async function safeCall<T>(fn: () => Promise<T>): Promise<string> {
   }
 }
 
+function audit(tool: string, extra?: Record<string, unknown>) {
+  console.error(JSON.stringify({ ts: new Date().toISOString(), tool, ...extra }));
+}
+
 function requireFG(toolName: string): FortiGateAPI {
+  audit(toolName, { backend: "fortigate" });
   if (!fg) throw new Error(`${toolName} requires FortiGate REST API (set FORTIGATE_HOST + FORTIGATE_API_KEY)`);
   return fg;
 }
 
 function requireFAZ(toolName: string): FortiAnalyzerAPI {
+  audit(toolName, { backend: "fortianalyzer" });
   if (!faz) throw new Error(`${toolName} requires FortiAnalyzer (set FAZ_HOST + FAZ_API_TOKEN or FAZ_USER/FAZ_PASSWORD)`);
   return faz;
 }
@@ -498,6 +504,7 @@ server.tool(
     ),
   },
   async ({ commands }) => {
+    audit("execute_cli_ssh", { backend: "ssh", commands });
     if (!fgSsh) {
       return {
         content: [{
@@ -809,7 +816,8 @@ async function main() {
     const SSE_RATE_LIMIT   = Number(process.env.MCP_RATE_LIMIT ?? "60"); // requests/min/session
 
     if (!SSE_AUTH_TOKEN) {
-      console.error("WARNING: MCP_AUTH_TOKEN is not set — SSE endpoint is unauthenticated. Set MCP_AUTH_TOKEN for production use.");
+      console.error("ERROR: MCP_AUTH_TOKEN must be set when running in SSE mode. Generate one with: openssl rand -hex 32");
+      process.exit(1);
     }
 
     interface SessionEntry {

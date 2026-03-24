@@ -235,8 +235,11 @@ export class FortiGateAPI {
   }) {
     const { type, subtype, rows, filter, vdom } = params;
     const queryParams: Record<string, string | number | boolean> = {};
-    if (rows) queryParams.rows = rows;
-    if (filter) queryParams.filter = filter;
+    if (rows) queryParams.rows = Math.max(1, Math.min(Math.trunc(rows), 1000));
+    if (filter) {
+      if (filter.length > 512) throw new Error("Filter string too long (max 512 characters)");
+      queryParams.filter = filter;
+    }
     return this.get(`/api/v2/log/memory/${type}/${subtype}`, queryParams, vdom);
   }
 
@@ -266,7 +269,7 @@ export class FortiGateAPI {
 
   async ping(host: string, count = 4, vdom?: string) {
     const safeHost = sanitizeCliArg(host);
-    const safeCount = Math.max(1, Math.min(count, 20)); // clamp 1-20
+    const safeCount = Math.max(1, Math.min(Number.isFinite(count) ? Math.trunc(count) : 4, 20));
     return this.cli([`execute ping-options repeat-count ${safeCount}`, `execute ping ${safeHost}`], vdom);
   }
 

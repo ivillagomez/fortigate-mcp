@@ -13,7 +13,7 @@ export interface FortiAnalyzerConfig {
   password?: string;     // for session-based auth
   apiToken?: string;     // alternative: API token (no login/logout needed)
   adom?: string;         // default "root"
-  verifySsl?: boolean;   // default false
+  verifySsl?: boolean;   // default true — set to false only for self-signed certs in isolated lab environments
 }
 
 interface JsonRpcRequest {
@@ -94,7 +94,7 @@ export class FortiAnalyzerAPI {
       headers,
       body: JSON.stringify(request),
       // @ts-expect-error — Node 22 fetch supports dispatcher for self-signed certs
-      dispatcher: this.config.verifySsl === true ? undefined : await this.getUnsafeAgent(),
+      dispatcher: this.config.verifySsl === false ? await this.getUnsafeAgent() : undefined,
     });
 
     if (!resp.ok) {
