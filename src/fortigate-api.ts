@@ -25,16 +25,17 @@ export interface ApiResponse<T = unknown> {
 }
 
 /**
- * Sanitize a CLI argument to prevent command injection.
- * Only allows alphanumeric, dots, hyphens, colons, and slashes (for IPs, hostnames, CIDRs).
+ * Sanitize a CLI argument to prevent command injection and path traversal.
+ * Only allows alphanumeric, dots, hyphens, underscores, and colons (for IPs, hostnames, CIDRs).
+ * Slashes are intentionally excluded to prevent path traversal in URL construction.
  */
 function sanitizeCliArg(input: string): string {
-  const sanitized = input.replace(/[^a-zA-Z0-9.\-_:\/]/g, "");
+  const sanitized = input.replace(/[^a-zA-Z0-9.\-_:]/g, "");
   if (sanitized.length === 0) {
     throw new Error(`Invalid CLI argument: "${input}"`);
   }
   if (sanitized !== input) {
-    throw new Error(`CLI argument contains invalid characters: "${input}" (only alphanumeric, dots, hyphens, underscores, colons, slashes allowed)`);
+    throw new Error(`CLI argument contains invalid characters: "${input}" (only alphanumeric, dots, hyphens, underscores, colons allowed)`);
   }
   return sanitized;
 }
