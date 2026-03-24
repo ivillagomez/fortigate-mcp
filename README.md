@@ -76,7 +76,7 @@ All write operations are blocked — the server will refuse any config/set/delet
 
 You need an API token so the MCP server can read data from your FortiGate. The token should be **read-only** — the MCP server never makes changes.
 
-1. Log into your FortiGate web GUI (e.g., `https://192.168.1.1`)
+1. Log into your FortiGate web GUI (e.g., `https://192.0.2.1`)
 2. Go to **System > Admin Profiles**
    - Click **Create New**
    - Name it something like `readonly-api`
@@ -86,7 +86,7 @@ You need an API token so the MCP server can read data from your FortiGate. The t
    - Click **Create New > REST API Admin**
    - Set a username (e.g., `mcp-reader`)
    - Assign the `readonly-api` profile you just created
-   - Under **Trusted Hosts**, add the IP of the machine that will run the MCP server (e.g., `192.168.1.100/32`). This restricts who can use the token.
+   - Under **Trusted Hosts**, add the IP of the machine that will run the MCP server (e.g., `192.0.2.100/32`). This restricts who can use the token.
    - Click **OK**
 4. **Copy the API token** that appears — you won't be able to see it again!
 
@@ -96,7 +96,7 @@ You need an API token so the MCP server can read data from your FortiGate. The t
 
 If you have a FortiAnalyzer and want centralized log search capabilities:
 
-1. Log into your FortiAnalyzer web GUI (e.g., `https://10.0.0.50`)
+1. Log into your FortiAnalyzer web GUI (e.g., `https://192.0.2.50`)
 2. Go to **System Settings > Admin > Administrators**
 3. Click **Create New**
    - Set type to **REST API Admin**
@@ -132,7 +132,7 @@ Replace the placeholder values with your actual FortiGate IP and API token, then
 ```bash
 # FortiGate only (minimum setup):
 docker run --rm -i --name fortigate-mcp \
-  -e FORTIGATE_HOST=192.168.1.1 \
+  -e FORTIGATE_HOST=192.0.2.1 \
   -e FORTIGATE_API_KEY=your-api-token \
   fortigate-mcp
 ```
@@ -149,12 +149,12 @@ You should see `FortiGate MCP Server running on stdio` — press `Ctrl+C` to sto
 
 ```bash
 docker run --rm -i --name fortigate-mcp \
-  -e FAZ_HOST=10.0.0.50 \
+  -e FAZ_HOST=192.0.2.50 \
   -e FAZ_API_TOKEN=your-faz-token \
   fortigate-mcp
 ```
 
-Replace `10.0.0.50` with your FortiAnalyzer IP and `your-faz-token` with your API token.
+Replace `192.0.2.50` with your FortiAnalyzer IP and `your-faz-token` with your API token.
 
 </details>
 
@@ -163,11 +163,11 @@ Replace `10.0.0.50` with your FortiAnalyzer IP and `your-faz-token` with your AP
 
 ```bash
 docker run --rm -i --name fortigate-mcp \
-  -e FORTIGATE_HOST=192.168.1.1 \
+  -e FORTIGATE_HOST=192.0.2.1 \
   -e FORTIGATE_API_KEY=your-fg-token \
   -e FORTIGATE_SSH_USER=admin \
   -e FORTIGATE_SSH_PASSWORD=your-ssh-password \
-  -e FAZ_HOST=10.0.0.50 \
+  -e FAZ_HOST=192.0.2.50 \
   -e FAZ_API_TOKEN=your-faz-token \
   fortigate-mcp
 ```
@@ -204,7 +204,7 @@ cp .env.example .env
 Open `.env` in any text editor and fill in your FortiGate IP and API token:
 
 ```bash
-FORTIGATE_HOST=192.168.1.1
+FORTIGATE_HOST=192.0.2.1
 FORTIGATE_API_KEY=your-api-token
 ```
 
@@ -226,7 +226,7 @@ You should see `FortiGate MCP Server running on stdio` — press `Ctrl+C` to sto
 
 | Environment Variable | Required | Default | Description |
 |---|---|---|---|
-| `FORTIGATE_HOST` | **Yes** | — | Your FortiGate's IP address (e.g., `192.168.1.1`) |
+| `FORTIGATE_HOST` | **Yes** | — | Your FortiGate's IP address (e.g., `192.0.2.1`) |
 | `FORTIGATE_API_KEY` | **Yes** | — | The API token you created ([see above](#fortigate-api-token)) |
 | `FORTIGATE_PORT` | No | `443` | HTTPS port — only change if your FortiGate uses a non-standard port |
 | `FORTIGATE_VERIFY_SSL` | No | `false` | Set to `true` if your FortiGate has a real (non-self-signed) TLS certificate |
@@ -242,7 +242,7 @@ You should see `FortiGate MCP Server running on stdio` — press `Ctrl+C` to sto
 
 | Environment Variable | Required | Default | Description |
 |---|---|---|---|
-| `FAZ_HOST` | **Yes** | — | Your FortiAnalyzer's IP address (e.g., `10.0.0.50`) |
+| `FAZ_HOST` | **Yes** | — | Your FortiAnalyzer's IP address (e.g., `192.0.2.50`) |
 | `FAZ_API_TOKEN` | **Yes**\* | — | API token (recommended — [see above](#fortianalyzer-api-token)) |
 | `FAZ_USER` | **Yes**\* | — | Admin username (alternative to API token) |
 | `FAZ_PASSWORD` | **Yes**\* | — | Admin password (use with `FAZ_USER`) |
@@ -298,8 +298,8 @@ docker -H tcp://YOUR_UNRAID_IP:2375 info
 On the machine where you use Claude Desktop (your laptop/PC), add this to your `claude_desktop_config.json`:
 
 > **Replace these values:**
-> - `YOUR_UNRAID_IP` — your Unraid server's IP address (e.g., `192.168.1.100`)
-> - `192.168.1.1` — your FortiGate's IP address
+> - `YOUR_UNRAID_IP` — your Unraid server's IP address (e.g., `192.0.2.100`)
+> - `192.0.2.1` — your FortiGate's IP address
 > - `your-api-token` — the FortiGate API token you created
 
 <details>
@@ -313,7 +313,7 @@ On the machine where you use Claude Desktop (your laptop/PC), add this to your `
       "args": [
         "-H", "tcp://YOUR_UNRAID_IP:2375",
         "run", "--rm", "-i", "--name", "fortigate-mcp",
-        "-e", "FORTIGATE_HOST=192.168.1.1",
+        "-e", "FORTIGATE_HOST=192.0.2.1",
         "-e", "FORTIGATE_API_KEY=your-api-token",
         "fortigate-mcp"
       ]
@@ -335,11 +335,11 @@ On the machine where you use Claude Desktop (your laptop/PC), add this to your `
       "args": [
         "-H", "tcp://YOUR_UNRAID_IP:2375",
         "run", "--rm", "-i", "--name", "fortigate-mcp",
-        "-e", "FORTIGATE_HOST=192.168.1.1",
+        "-e", "FORTIGATE_HOST=192.0.2.1",
         "-e", "FORTIGATE_API_KEY=your-api-token",
         "-e", "FORTIGATE_SSH_USER=admin",
         "-e", "FORTIGATE_SSH_PASSWORD=your-ssh-password",
-        "-e", "FAZ_HOST=10.0.0.50",
+        "-e", "FAZ_HOST=192.0.2.50",
         "-e", "FAZ_API_TOKEN=your-faz-token",
         "fortigate-mcp"
       ]
@@ -369,7 +369,7 @@ If you cannot or prefer not to expose the Docker TCP socket, the original SSH me
       "args": [
         "root@YOUR_UNRAID_IP",
         "docker", "run", "--rm", "-i", "--name", "fortigate-mcp",
-        "-e", "FORTIGATE_HOST=192.168.1.1",
+        "-e", "FORTIGATE_HOST=192.0.2.1",
         "-e", "FORTIGATE_API_KEY=your-api-token",
         "fortigate-mcp"
       ]
@@ -405,7 +405,7 @@ If you want to configure variables through the Unraid GUI, click **Add another P
 
 | Config Type | Name | Key | Example Value | Required |
 |---|---|---|---|---|
-| Variable | FortiGate Host | `FORTIGATE_HOST` | `192.168.1.1` | Yes |
+| Variable | FortiGate Host | `FORTIGATE_HOST` | `192.0.2.1` | Yes |
 | Variable | FortiGate API Key | `FORTIGATE_API_KEY` | `your-api-token` | Yes |
 | Variable | FortiGate Port | `FORTIGATE_PORT` | `443` | No |
 | Variable | Verify SSL | `FORTIGATE_VERIFY_SSL` | `false` | No |
@@ -413,7 +413,7 @@ If you want to configure variables through the Unraid GUI, click **Add another P
 | Variable | SSH User | `FORTIGATE_SSH_USER` | `admin` | No |
 | Variable | SSH Password | `FORTIGATE_SSH_PASSWORD` | `your-password` | No |
 | Variable | SSH Port | `FORTIGATE_SSH_PORT` | `22` | No |
-| Variable | FAZ Host | `FAZ_HOST` | `10.0.0.50` | If using FAZ |
+| Variable | FAZ Host | `FAZ_HOST` | `192.0.2.50` | If using FAZ |
 | Variable | FAZ API Token | `FAZ_API_TOKEN` | `your-faz-token` | If using FAZ |
 | Variable | FAZ User | `FAZ_USER` | `admin` | Alt to token |
 | Variable | FAZ Password | `FAZ_PASSWORD` | `your-password` | Alt to token |
@@ -451,7 +451,7 @@ By default, the server uses **stdio** transport — Claude Desktop or Claude Cod
 docker run -d --name fortigate-mcp \
   -p 3000:3000 \
   -e MCP_TRANSPORT=sse \
-  -e FORTIGATE_HOST=192.168.1.1 \
+  -e FORTIGATE_HOST=192.0.2.1 \
   -e FORTIGATE_API_KEY=your-api-token \
   fortigate-mcp
 ```
@@ -485,14 +485,14 @@ Once the server is running in SSE mode, it exposes three endpoints:
 
 ### Claude Desktop Config for SSE Mode
 
-If the SSE server is running on another machine (e.g., an Unraid server at `192.168.1.100`), you can point Claude Desktop at it using the `url` transport type:
+If the SSE server is running on another machine (e.g., an Unraid server at `192.0.2.100`), you can point Claude Desktop at it using the `url` transport type:
 
 ```json
 {
   "mcpServers": {
     "fortigate": {
       "transport": "sse",
-      "url": "http://192.168.1.100:3000/sse"
+      "url": "http://192.0.2.100:3000/sse"
     }
   }
 }
@@ -532,7 +532,7 @@ Pick the example that matches your setup. Replace the placeholder IPs and tokens
       "command": "docker",
       "args": [
         "run", "--rm", "-i", "--name", "fortigate-mcp",
-        "-e", "FORTIGATE_HOST=192.168.1.1",
+        "-e", "FORTIGATE_HOST=192.0.2.1",
         "-e", "FORTIGATE_API_KEY=your-api-token",
         "fortigate-mcp"
       ]
@@ -541,7 +541,7 @@ Pick the example that matches your setup. Replace the placeholder IPs and tokens
 }
 ```
 
-> Replace `192.168.1.1` with your FortiGate's IP address and `your-api-token` with the API token you created.
+> Replace `192.0.2.1` with your FortiGate's IP address and `your-api-token` with the API token you created.
 
 </details>
 
@@ -555,7 +555,7 @@ Pick the example that matches your setup. Replace the placeholder IPs and tokens
       "command": "docker",
       "args": [
         "run", "--rm", "-i", "--name", "fortigate-mcp",
-        "-e", "FORTIGATE_HOST=192.168.1.1",
+        "-e", "FORTIGATE_HOST=192.0.2.1",
         "-e", "FORTIGATE_API_KEY=your-api-token",
         "-e", "FORTIGATE_SSH_USER=admin",
         "-e", "FORTIGATE_SSH_PASSWORD=your-ssh-password",
@@ -580,7 +580,7 @@ Pick the example that matches your setup. Replace the placeholder IPs and tokens
       "command": "docker",
       "args": [
         "run", "--rm", "-i", "--name", "fortigate-mcp",
-        "-e", "FAZ_HOST=10.0.0.50",
+        "-e", "FAZ_HOST=192.0.2.50",
         "-e", "FAZ_API_TOKEN=your-faz-token",
         "fortigate-mcp"
       ]
@@ -589,7 +589,7 @@ Pick the example that matches your setup. Replace the placeholder IPs and tokens
 }
 ```
 
-> Replace `10.0.0.50` with your FortiAnalyzer's IP address.
+> Replace `192.0.2.50` with your FortiAnalyzer's IP address.
 
 </details>
 
@@ -603,11 +603,11 @@ Pick the example that matches your setup. Replace the placeholder IPs and tokens
       "command": "docker",
       "args": [
         "run", "--rm", "-i", "--name", "fortigate-mcp",
-        "-e", "FORTIGATE_HOST=192.168.1.1",
+        "-e", "FORTIGATE_HOST=192.0.2.1",
         "-e", "FORTIGATE_API_KEY=your-fg-token",
         "-e", "FORTIGATE_SSH_USER=admin",
         "-e", "FORTIGATE_SSH_PASSWORD=your-ssh-password",
-        "-e", "FAZ_HOST=10.0.0.50",
+        "-e", "FAZ_HOST=192.0.2.50",
         "-e", "FAZ_API_TOKEN=your-faz-token",
         "fortigate-mcp"
       ]
@@ -635,7 +635,7 @@ If you cloned the repo to your Desktop:
       "command": "node",
       "args": ["C:\\Users\\YourName\\Desktop\\fortigate-mcp\\build\\index.js"],
       "env": {
-        "FORTIGATE_HOST": "192.168.1.1",
+        "FORTIGATE_HOST": "192.0.2.1",
         "FORTIGATE_API_KEY": "your-api-token"
       }
     }
@@ -651,7 +651,7 @@ If you cloned it to a project folder:
       "command": "node",
       "args": ["C:\\Projects\\fortigate-mcp\\build\\index.js"],
       "env": {
-        "FORTIGATE_HOST": "192.168.1.1",
+        "FORTIGATE_HOST": "192.0.2.1",
         "FORTIGATE_API_KEY": "your-api-token"
       }
     }
@@ -674,7 +674,7 @@ If you cloned the repo to your home folder:
       "command": "node",
       "args": ["/Users/yourname/fortigate-mcp/build/index.js"],
       "env": {
-        "FORTIGATE_HOST": "192.168.1.1",
+        "FORTIGATE_HOST": "192.0.2.1",
         "FORTIGATE_API_KEY": "your-api-token"
       }
     }
@@ -690,7 +690,7 @@ If you cloned it to your Documents folder:
       "command": "node",
       "args": ["/Users/yourname/Documents/fortigate-mcp/build/index.js"],
       "env": {
-        "FORTIGATE_HOST": "192.168.1.1",
+        "FORTIGATE_HOST": "192.0.2.1",
         "FORTIGATE_API_KEY": "your-api-token"
       }
     }
@@ -711,7 +711,7 @@ If you cloned the repo to your home folder:
       "command": "node",
       "args": ["/home/yourname/fortigate-mcp/build/index.js"],
       "env": {
-        "FORTIGATE_HOST": "192.168.1.1",
+        "FORTIGATE_HOST": "192.0.2.1",
         "FORTIGATE_API_KEY": "your-api-token"
       }
     }
@@ -732,11 +732,11 @@ The path works the same way — just add more env vars:
       "command": "node",
       "args": ["C:\\Users\\YourName\\Desktop\\fortigate-mcp\\build\\index.js"],
       "env": {
-        "FORTIGATE_HOST": "192.168.1.1",
+        "FORTIGATE_HOST": "192.0.2.1",
         "FORTIGATE_API_KEY": "your-fg-api-token",
         "FORTIGATE_SSH_USER": "admin",
         "FORTIGATE_SSH_PASSWORD": "your-ssh-password",
-        "FAZ_HOST": "10.0.0.50",
+        "FAZ_HOST": "192.0.2.50",
         "FAZ_API_TOKEN": "your-faz-api-token"
       }
     }
@@ -772,7 +772,7 @@ Open a terminal and run **one** of the following commands (pick the one that mat
 
 ```bash
 claude mcp add fortigate -- docker run --rm -i --name fortigate-mcp \
-  -e FORTIGATE_HOST=192.168.1.1 \
+  -e FORTIGATE_HOST=192.0.2.1 \
   -e FORTIGATE_API_KEY=your-api-token \
   fortigate-mcp
 ```
@@ -784,7 +784,7 @@ claude mcp add fortigate -- docker run --rm -i --name fortigate-mcp \
 
 ```bash
 claude mcp add fortigate -- docker run --rm -i --name fortigate-mcp \
-  -e FORTIGATE_HOST=192.168.1.1 \
+  -e FORTIGATE_HOST=192.0.2.1 \
   -e FORTIGATE_API_KEY=your-api-token \
   -e FORTIGATE_SSH_USER=admin \
   -e FORTIGATE_SSH_PASSWORD=your-ssh-password \
@@ -798,7 +798,7 @@ claude mcp add fortigate -- docker run --rm -i --name fortigate-mcp \
 
 ```bash
 claude mcp add fortigate -- docker run --rm -i --name fortigate-mcp \
-  -e FAZ_HOST=10.0.0.50 \
+  -e FAZ_HOST=192.0.2.50 \
   -e FAZ_API_TOKEN=your-faz-token \
   fortigate-mcp
 ```
@@ -810,11 +810,11 @@ claude mcp add fortigate -- docker run --rm -i --name fortigate-mcp \
 
 ```bash
 claude mcp add fortigate -- docker run --rm -i --name fortigate-mcp \
-  -e FORTIGATE_HOST=192.168.1.1 \
+  -e FORTIGATE_HOST=192.0.2.1 \
   -e FORTIGATE_API_KEY=your-api-token \
   -e FORTIGATE_SSH_USER=admin \
   -e FORTIGATE_SSH_PASSWORD=your-ssh-password \
-  -e FAZ_HOST=10.0.0.50 \
+  -e FAZ_HOST=192.0.2.50 \
   -e FAZ_API_TOKEN=your-faz-token \
   fortigate-mcp
 ```
@@ -985,7 +985,7 @@ SSH is **optional** — the server works fine with just the REST API. Add SSH cr
 
 ```bash
 docker run --rm -i --name fortigate-mcp \
-  -e FORTIGATE_HOST=192.168.1.1 \
+  -e FORTIGATE_HOST=192.0.2.1 \
   -e FORTIGATE_API_KEY=your-api-token \
   -e FORTIGATE_SSH_USER=admin \
   -e FORTIGATE_SSH_PASSWORD=your-password \
@@ -1041,7 +1041,7 @@ Set the default VDOM via environment variable:
 
 ```bash
 docker run --rm -i --name fortigate-mcp \
-  -e FORTIGATE_HOST=192.168.1.1 \
+  -e FORTIGATE_HOST=192.0.2.1 \
   -e FORTIGATE_API_KEY=your-api-token \
   -e FORTIGATE_VDOM=customer-a \
   fortigate-mcp
